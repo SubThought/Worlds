@@ -1,0 +1,232 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; aether-psyche.theory — The Aether Psyche
+;;;
+;;; The Aether is a Psyche: the interface between a GIL mind and the
+;;; internet-as-world.  This theory defines a single agent with:
+;;;
+;;;   Job (proactive)     — polls channels for percepts, wraps as
+;;;                         PERCEPT tuples, forwards to the Perceiver.
+;;;                         Monitors homeostatic conditions, emits URGEs.
+;;;
+;;;   Handler (reactive)  — receives ATTEMPTs from the Executor,
+;;;                         dispatches through aether-act, returns RESULTs.
+;;;
+;;; All percepts carry :Modality Aether.
+;;;
+
+
+(require Aether    from "pkg/aether/aether.package")
+(require OpenClaw  from "pkg/aether/openclaw.package")
+(require OmegaClaw from "pkg/aether/omegaclaw.package")
+(require Port42    from "pkg/aether/port42.package")
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §1  CONFIGURATION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?psyche-url     (setting Aether Psyche :Url))
+(var ?psyche-port    (setting Aether Psyche :Port))
+(var ?psyche-delay   (setting Aether Psyche :Delay))
+(var ?perceiver-url  (setting GIL Perceiver :Url))
+(var ?registrar-url  (setting GIL Registrar :Url))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §2  DEVICE REGISTRATION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?token
+  (ask ?registrar-url
+    {device   Aether
+     type     Psyche
+     modality Aether
+     channels {Web FileSystem Process Message Browser Memory Service System Embodiment}
+     needs    {connectivity attention storage punctuality}
+     actuations {exec exec-background process-kill process-write
+                 file-create file-overwrite file-edit file-patch file-delete file-move
+                 web-search web-fetch
+                 browser-navigate browser-click browser-type browser-execute browser-capture
+                 message-send agent-send agent-spawn notify email-send
+                 memory-store memory-delete knowledge-assert knowledge-retract
+                 nal-infer pln-infer
+                 generate-text generate-image render-ui
+                 cron-schedule cron-cancel rest-call
+                 drive-command gimbal-command joint-command light-command
+                 speak clipboard-write automation-run capture-screen capture-camera}}))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §3  ADAPTER CONNECTIONS
+;;; ═══════════════════════════════════════════════════════════════
+
+(aether-connect-all)
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §4  TUPLE CONSTRUCTORS
+;;; ═══════════════════════════════════════════════════════════════
+
+(function make-percept {literal ?channel literal ?data variant ?address idiom ?content}
+  (var ?percept
+    [PERCEPT :Modality Aether
+             :Channel  ?channel
+             :Address  ?address
+             :Data     ?data
+             :Content  ?content
+             :Moment   (moment)
+             :Token    ?token])
+  (tell ?perceiver-url ?percept)
+  ?percept)
+
+(function make-result {literal ?action literal ?status variant ?reason}
+  (var ?result
+    [RESULT :Action ?action
+            :Status ?status
+            :Reason ?reason
+            :Moment (moment)
+            :Token  ?token])
+  (tell ?perceiver-url ?result)
+  ?result)
+
+(function make-urge {literal ?need literal ?source real ?delta}
+  (var ?urge
+    [URGE :Need   ?need
+          :Source ?source
+          :Delta  ?delta
+          :Moment (moment)
+          :Token  ?token])
+  (tell ?perceiver-url ?urge)
+  ?urge)
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §5  POLLING BOOKKEEPING
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?poll-times {})
+(var ?monitor-last 0)
+
+(function due? {literal ?channel integer ?interval}
+  (var ?last (get ?poll-times ?channel))
+  (if (nil-p ?last) yes
+    else (>= (- (moment) ?last) ?interval)))
+
+(function mark-polled {literal ?channel}
+  (set ?poll-times (put ?poll-times ?channel (moment))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §6  HELPERS
+;;; ═══════════════════════════════════════════════════════════════
+
+(function infer-data-type {idiom ?raw}
+  (if (/= (:Query ?raw)      nil)  search-result
+   or (/= (:Stdout ?raw)     nil)  process-output
+   or (/= (:Sender ?raw)     nil)  message-received
+   or (/= (:SensorType ?raw) nil)  sensor-reading
+   or (/= (:Width ?raw)      nil)  media
+   or (/= (:EventType ?raw)  nil)  file-event
+   or (/= (:Service ?raw)    nil)  service-resource
+   or (/= (:Reifier ?raw)    nil)  knowledge-result
+   or (/= (:JobId ?raw)      nil)  schedule-event
+   or (/= (:Status ?raw)     nil)  connection-status
+   else                            unknown))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §7  JOB (proactive): sensing + monitoring
+;;; ═══════════════════════════════════════════════════════════════
+
+(function aether-job {}
+
+  ;;; ── Sensing ──
+  (for ?channel in {Web FileSystem Process Message Browser Memory Service System Embodiment}
+    (var ?interval (setting Aether Polling ?channel))
+    (when (and (> ?interval 0) (due? ?channel ?interval))
+
+      (var ?raw (aether-sense ?channel))
+      (when (/= ?raw nil)
+        (for ?datum in ?raw
+          (when (/= ?datum nil)
+            (make-percept
+              ?channel
+              (if (nil-p (:Data ?datum)) (infer-data-type ?datum)
+                else (:Data ?datum))
+              (:Address ?datum)
+              ?datum))))
+
+      (mark-polled ?channel)))
+
+
+  ;;; ── Monitoring ──
+  (var ?monitor-interval \@m{30})
+  (when (>= (- (moment) ?monitor-last) ?monitor-interval)
+
+    ;;; Connectivity
+    (with Adapter {:Status disconnected :Name ?name}
+      (var ?cfg (setting Aether Urges :ConnectionLost))
+      (make-urge (:Need ?cfg) (:Source ?cfg) (:Threshold ?cfg)))
+
+    ;;; Message backlog
+    (var ?messages (aether-sense Message))
+    (when (/= ?messages nil)
+      (var ?mcount (# ?messages))
+      (var ?cfg (setting Aether Urges :InboxOverflow))
+      (when (> ?mcount (:Threshold ?cfg))
+        (make-urge (:Need ?cfg) (:Source ?cfg) (/ ?mcount (:Threshold ?cfg)))))
+
+    ;;; Disk usage
+    (try
+      (var ?disk (aether-exec "df -h / | tail -1 | awk '{print $5}' | tr -d '%'"))
+      (var ?usage (/ (integer (:Stdout ?disk)) 100.0))
+      (var ?cfg (setting Aether Urges :DiskFull))
+      (when (> ?usage (:Threshold ?cfg))
+        (make-urge (:Need ?cfg) (:Source ?cfg) ?usage))
+    learn ?err
+      nil)
+
+    (set ?monitor-last (moment))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §8  HANDLER (reactive): actuation
+;;; ═══════════════════════════════════════════════════════════════
+
+(function aether-handler {url ?sender string ?message}
+  (when (= (@ ?message 1) ATTEMPT)
+    (var ?action (:Action ?message))
+    (var ?params (:Parameters ?message))
+    (try
+      (var ?raw (aether-act ?action ?params))
+      (make-result ?action succeeded ?raw)
+    learn ?err
+      (make-result ?action failed (string ?err)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §9  THE AGENT
+;;; ═══════════════════════════════════════════════════════════════
+
+(agent Aether aether-job ?psyche-url aether-handler ?psyche-delay {sensing acting monitoring})
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §10  STARTUP
+;;; ═══════════════════════════════════════════════════════════════
+
+(tell user "Aether Psyche ready.")
