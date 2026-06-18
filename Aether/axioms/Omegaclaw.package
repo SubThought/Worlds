@@ -1,0 +1,161 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; omegaclaw.package — OmegaClaw Adapter Protocol
+;;;
+;;; Wraps OmegaClaw's MeTTa bridge functions, Agentverse agent calls,
+;;; AtomSpace knowledge queries, and NAL/PLN inference via tell/ask.
+;;;
+
+(package OmegaClaw {1 0 0}
+
+  memo "OmegaClaw adapter — protocol functions for the OmegaClaw agent framework."
+
+
+  ;;; §1  HELPERS
+
+  (function omega-default {variant ?value variant ?fallback}
+    (if (nil-p ?value) ?fallback else ?value))
+
+
+  ;;; §2  CONNECTION
+
+  (function omega-open {string ?url idiom ?options}
+    (var ?conn (open ?url ?options))
+    (when (nil-p ?conn)
+      (signal Failure :Text ($ "OmegaClaw: could not connect to" ?url)))
+    ?conn)
+
+  (function omega-close {?handle}
+    (close ?handle)
+    closed)
+
+  (function omega-status {?handle}
+    (var ?s (ask ?handle {skill status}))
+    {:Status (if (nil-p ?s) disconnected else connected) :Adapter omegaclaw})
+
+
+  ;;; §3  CHANNEL: WEB (via Agentverse)
+
+  (function omega-web-search {?handle string ?query integer ?max}
+    (ask ?handle {skill agentverse :agent tavily-search :query ?query :max_results ?max}))
+
+  (function omega-web-fetch {?handle string ?url integer ?maxChars}
+    (ask ?handle {skill web-fetch :url ?url :max_chars ?maxChars}))
+
+
+  ;;; §4  CHANNEL: FILESYSTEM (via shell bridge)
+
+  (function omega-file-read {?handle string ?path}
+    (ask ?handle {skill shell :command ($ "cat" ?path)}))
+
+  (function omega-file-write {?handle string ?path string ?content}
+    (tell ?handle {skill file-write :path ?path :content ?content})
+    {:EventType created :Path ?path})
+
+  (function omega-file-edit {?handle string ?path string ?old string ?new}
+    (tell ?handle {skill file-modify :path ?path :old_text ?old :new_text ?new})
+    {:EventType modified :Path ?path})
+
+  (function omega-dir-list {?handle string ?path}
+    (ask ?handle {skill shell :command ($ "ls -la" ?path)}))
+
+
+  ;;; §5  CHANNEL: PROCESS
+
+  (function omega-exec {?handle string ?command idiom ?options}
+    (ask ?handle {skill shell :command ?command}))
+
+
+  ;;; §6  CHANNEL: MESSAGE (IRC / Telegram)
+
+  (function omega-message-send {?handle literal ?channel string ?channelId string ?text}
+    (tell ?handle {skill send-message :channel ?channel :target ?channelId :text ?text})
+    {:Status sent :Channel ?channel})
+
+  (function omega-message-poll {?handle}
+    (ask ?handle {skill poll-messages}))
+
+
+  ;;; §7  CHANNEL: MEMORY
+
+  (function omega-memory-search {?handle string ?query integer ?limit}
+    (ask ?handle {skill memory-search :query ?query :limit ?limit}))
+
+  (function omega-memory-store {?handle string ?key variant ?content}
+    (tell ?handle {skill memory-store :key ?key :content ?content})
+    stored)
+
+  (function omega-memory-delete {?handle string ?key}
+    (tell ?handle {skill memory-delete :key ?key})
+    deleted)
+
+
+  ;;; §8  KNOWLEDGE GRAPH (AtomSpace)
+
+  (function omega-knowledge-query {?handle string ?query}
+    (ask ?handle {skill atomspace-query :pattern ?query}))
+
+  (function omega-knowledge-assert {?handle idiom ?scheme}
+    (tell ?handle {skill atomspace-assert
+                   :reifier   (:Reifier ?scheme)
+                   :relation  (:Relation ?scheme)
+                   :arguments (:Arguments ?scheme)
+                   :referents (:Referents ?scheme)
+                   :confidence (:Confidence ?scheme)})
+    asserted)
+
+  (function omega-knowledge-retract {?handle variant ?reifier}
+    (tell ?handle {skill atomspace-retract :reifier ?reifier})
+    retracted)
+
+
+  ;;; §9  REASONING (NAL / PLN)
+
+  (function omega-nal-infer {?handle list ?premises string ?query integer ?depth}
+    (ask ?handle {skill nal-infer :premises ?premises :query ?query :depth ?depth}))
+
+  (function omega-pln-infer {?handle list ?premises string ?query real ?threshold}
+    (ask ?handle {skill pln-infer :premises ?premises :query ?query :confidence_threshold ?threshold}))
+
+
+  ;;; §10  AGENTVERSE (generic remote agents)
+
+  (function omega-agent-call {?handle literal ?agent idiom ?params}
+    (ask ?handle {skill agentverse :agent ?agent :params ?params}))
+
+
+  ;;; §11  GENERIC DISPATCH
+
+  (function omega-dispatch {?handle literal ?action idiom ?params}
+    (case ?action
+      of exec              (omega-exec ?handle (:Command ?params) ?params)
+      of file-create       (omega-file-write ?handle (:Path ?params) (:Content ?params))
+      of file-overwrite    (omega-file-write ?handle (:Path ?params) (:Content ?params))
+      of file-edit         (omega-file-edit ?handle (:Path ?params) (:OldText ?params) (:NewText ?params))
+      of file-delete       (omega-exec ?handle ($ "rm" (:Path ?params)) {})
+      of web-search        (omega-web-search ?handle (:Query ?params) (omega-default (:MaxResults ?params) 5))
+      of web-fetch         (omega-web-fetch ?handle (:Url ?params) (omega-default (:MaxChars ?params) 50000))
+      of message-send      (omega-message-send ?handle (:Channel ?params) (:ChannelId ?params) (:Text ?params))
+      of memory-store      (omega-memory-store ?handle (:Key ?params) (:Content ?params))
+      of memory-delete     (omega-memory-delete ?handle (:Key ?params))
+      of knowledge-assert  (omega-knowledge-assert ?handle ?params)
+      of knowledge-retract (omega-knowledge-retract ?handle (:Reifier ?params))
+      of nal-infer         (omega-nal-infer ?handle (:Premises ?params) (:Query ?params) (omega-default (:Depth ?params) 3))
+      of pln-infer         (omega-pln-infer ?handle (:Premises ?params) (:Query ?params) (omega-default (:ConfidenceThreshold ?params) 0.5))
+      of rest-call         (omega-web-fetch ?handle (:Url ?params) 50000)
+      else                 (signal Failure :Text ($ "OmegaClaw: unknown action" ?action))))
+
+)

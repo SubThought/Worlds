@@ -1,0 +1,139 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; Aether.daicho — Aether Psyche Configuration
+;;;
+;;; Settings only. No agent logic.
+;;; Read at startup by aether-psyche.theory via (setting Aether ...).
+;;;
+
+(settings Aether {1 0 0}
+  memo "Aether — the internet-world Psyche for GIL."
+
+
+  ;;; ════════════════════════════════════════════════════════════
+  ;;; §1  PSYCHE AGENT
+  ;;; ════════════════════════════════════════════════════════════
+
+  [Psyche
+    :Url        "locus://sol.earth.orb.local.host/mind/aether"
+    :Port       2100
+    :Delay      \@m{5}
+    :Modality   Aether
+  ]
+
+
+  ;;; ════════════════════════════════════════════════════════════
+  ;;; §2  ADAPTERS
+  ;;; ════════════════════════════════════════════════════════════
+
+  [OpenClaw
+    :Url            "ws://localhost:3001"
+    :Adapter        openclaw
+    :AutoConnect    yes
+    :Timeout        \@m{150}
+    :Channels       {Web FileSystem Process Message Browser System}
+    :Capabilities   {exec exec-background process-kill process-write
+                     file-create file-overwrite file-edit file-patch file-delete file-move
+                     web-search web-fetch rest-call
+                     browser-navigate browser-click browser-type browser-execute browser-capture
+                     message-send agent-send agent-spawn
+                     memory-store memory-delete memory-search
+                     cron-schedule cron-cancel
+                     drive-command joint-command capture-camera capture-screen}
+  ]
+
+  [OmegaClaw
+    :Url            "ws://localhost:3002"
+    :Adapter        omegaclaw
+    :AutoConnect    no
+    :Timeout        \@m{150}
+    :Channels       {Web FileSystem Process Message Memory}
+    :Capabilities   {exec file-create file-overwrite file-edit file-delete
+                     web-search web-fetch rest-call
+                     message-send
+                     memory-store memory-delete memory-search
+                     knowledge-assert knowledge-retract
+                     nal-infer pln-infer}
+  ]
+
+  [Port42
+    :Url            "ws://localhost:4242"
+    :Adapter        port42
+    :AutoConnect    no
+    :Timeout        \@m{100}
+    :Channels       {Browser Embodiment}
+    :Capabilities   {browser-navigate browser-click browser-type browser-execute browser-capture
+                     capture-screen capture-camera speak
+                     clipboard-write automation-run notify rest-call}
+  ]
+
+
+  ;;; ════════════════════════════════════════════════════════════
+  ;;; §3  CHANNEL ROUTING
+  ;;;
+  ;;; When multiple adapters support the same channel, these
+  ;;; priority lists determine which handles each request.
+  ;;; First connected adapter wins.
+  ;;; ════════════════════════════════════════════════════════════
+
+  [Routing
+    :Web            {openclaw omegaclaw}
+    :FileSystem     {openclaw omegaclaw}
+    :Process        {openclaw omegaclaw}
+    :Message        {openclaw omegaclaw}
+    :Browser        {openclaw port42}
+    :Memory         {omegaclaw openclaw}
+    :Service        {openclaw}
+    :System         {openclaw}
+    :Embodiment     {port42 openclaw}
+  ]
+
+
+  ;;; ════════════════════════════════════════════════════════════
+  ;;; §4  POLLING
+  ;;;
+  ;;; How often each channel is polled for unsolicited percepts.
+  ;;; Values in Moments. 0 = push only (results follow dispatches).
+  ;;; ════════════════════════════════════════════════════════════
+
+  [Polling
+    :Web            0
+    :FileSystem     \@m{10}
+    :Process        \@m{5}
+    :Message        \@m{3}
+    :Browser        0
+    :Memory         0
+    :Service        \@m{30}
+    :System         \@m{15}
+    :Embodiment     \@m{3}
+  ]
+
+
+  ;;; ════════════════════════════════════════════════════════════
+  ;;; §5  URGES
+  ;;;
+  ;;; Homeostatic needs the Monitor agent watches for.
+  ;;; :Threshold is the delta that triggers the URGE tuple.
+  ;;; ════════════════════════════════════════════════════════════
+
+  [Urges
+    :ConnectionLost     {:Need connectivity    :Source System      :Threshold 1.0}
+    :InboxOverflow      {:Need attention       :Source Message     :Threshold 10}
+    :DiskFull           {:Need storage         :Source FileSystem  :Threshold 0.95}
+    :ScheduleMissed     {:Need punctuality     :Source System      :Threshold 1.0}
+  ]
+
+)

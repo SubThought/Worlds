@@ -1,0 +1,270 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; aether.suites — Test Suites for the Aether Psyche
+;;;
+;;; § 1   Adapter lifecycle
+;;; § 2   Adapter packages
+;;; § 3   Routing
+;;; § 4   Sensing
+;;; § 5   Acting
+;;; § 6   Percept formation
+;;; § 7   Urge generation
+;;; § 8   Convenience functions
+;;; § 9   Full lifecycle
+;;;
+
+
+(suites Aether
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 1  Adapter Lifecycle
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite Aether.lifecycle
+    {
+      [lifecycle_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [lifecycle_00002  >  (var ?a (aether-connect-adapter openclaw "ws://localhost:3001" {}))   .:  ?a]
+      [lifecycle_00003  >  (confirm (/= ?a nil) since "Should return an Adapter thought.")]
+      [lifecycle_00004  >  (confirm (= (:Name ?a) openclaw) since "Adapter :Name should be openclaw.")]
+      [lifecycle_00005  >  (confirm (= (:Status ?a) connected) since "Adapter :Status should be connected.")]
+      [lifecycle_00006  >  (aether-disconnect-adapter openclaw)   .:  disconnected]
+    })
+
+    (suite Aether.multi-adapter
+    {
+      [multi_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [multi_00002  >  (aether-connect-adapter openclaw "ws://localhost:3001" {})   .:  ?a1]
+      [multi_00003  >  (aether-connect-adapter omegaclaw "ws://localhost:3002" {})   .:  ?a2]
+      [multi_00004  >  (confirm (= (:Name ?a1) openclaw) since "First adapter should be openclaw.")]
+      [multi_00005  >  (confirm (= (:Name ?a2) omegaclaw) since "Second adapter should be omegaclaw.")]
+      [multi_00006  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 2  Adapter Packages
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite OpenClaw.protocol
+    {
+      [oc_proto_00001  >  (require OpenClaw from "pkg/aether/openclaw.package")   .:  OpenClaw]
+      [oc_proto_00002  >  (var ?h (oc-open "ws://localhost:3001" {}))   .:  ?h]
+      [oc_proto_00003  >  (var ?s (oc-status ?h))   .:  ?s]
+      [oc_proto_00004  >  (confirm (= (:Adapter ?s) openclaw) since "Status should report openclaw.")]
+      [oc_proto_00005  >  (var ?out (oc-exec ?h "echo hello" {}))   .:  ?out]
+      [oc_proto_00006  >  (confirm (= (:ExitCode ?out) 0) since "Echo should exit 0.")]
+      [oc_proto_00007  >  (oc-close ?h)   .:  closed]
+    })
+
+    (suite OmegaClaw.protocol
+    {
+      [omega_proto_00001  >  (require OmegaClaw from "pkg/aether/omegaclaw.package")   .:  OmegaClaw]
+      [omega_proto_00002  >  (var ?h (omega-open "ws://localhost:3002" {}))   .:  ?h]
+      [omega_proto_00003  >  (var ?s (omega-status ?h))   .:  ?s]
+      [omega_proto_00004  >  (confirm (= (:Adapter ?s) omegaclaw) since "Status should report omegaclaw.")]
+      [omega_proto_00005  >  (omega-close ?h)   .:  closed]
+    })
+
+    (suite Port42.protocol
+    {
+      [p42_proto_00001  >  (require Port42 from "pkg/aether/port42.package")   .:  Port42]
+      [p42_proto_00002  >  (var ?h (p42-open "ws://localhost:4242" {}))   .:  ?h]
+      [p42_proto_00003  >  (var ?s (p42-status ?h))   .:  ?s]
+      [p42_proto_00004  >  (confirm (= (:Adapter ?s) port42) since "Status should report port42.")]
+      [p42_proto_00005  >  (p42-close ?h)   .:  closed]
+    })
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 3  Routing
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite Aether.routing
+    {
+      [route_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [route_00002  >  (aether-connect-adapter openclaw "ws://localhost:3001" {})   .:  ?a]
+      [route_00003  >  (var ?r (aether-route Web))   .:  ?r]
+      [route_00004  >  (confirm (= (:Name ?r) openclaw) since "Web should route to openclaw.")]
+      [route_00005  >  (var ?r2 (aether-route-action exec))   .:  ?r2]
+      [route_00006  >  (confirm (= (:Name ?r2) openclaw) since "exec should route to openclaw.")]
+      [route_00007  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+    (suite Aether.routing-fallback
+    {
+      [fallback_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [fallback_00002  >  (aether-connect-adapter omegaclaw "ws://localhost:3002" {})   .:  ?a]
+      [fallback_00003  >  (var ?r (aether-route Memory))   .:  ?r]
+      [fallback_00004  >  (confirm (= (:Name ?r) omegaclaw) since "Memory should route to omegaclaw.")]
+      [fallback_00005  >  (var ?r2 (aether-route-action nal-infer))   .:  ?r2]
+      [fallback_00006  >  (confirm (= (:Name ?r2) omegaclaw) since "nal-infer should route to omegaclaw.")]
+      [fallback_00007  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 4  Sensing
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite Aether.sensing
+    {
+      [sense_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [sense_00002  >  (aether-connect-adapter openclaw "ws://localhost:3001" {})   .:  ?a]
+      [sense_00003  >  (var ?msgs (aether-sense Message))   .:  ?msgs]
+      [sense_00004  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 5  Acting
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite Aether.acting
+    {
+      [act_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [act_00002  >  (aether-connect-adapter openclaw "ws://localhost:3001" {})   .:  ?a]
+      [act_00003  >  (var ?r (aether-act exec {:Command "echo aether-test"}))   .:  ?r]
+      [act_00004  >  (confirm (= (:ExitCode ?r) 0) since "Echo should exit 0.")]
+      [act_00005  >  (aether-act file-create {:Path "/tmp/aether-act.txt" :Content "test content"})   .:  ?w]
+      [act_00006  >  (confirm (= (:EventType ?w) created) since "Should confirm created.")]
+      [act_00007  >  (var ?sr (aether-act web-search {:Query "premise language" :MaxResults 2}))   .:  ?sr]
+      [act_00008  >  (confirm (> (# ?sr) 0) since "Should return results.")]
+      [act_00009  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+    (suite Aether.acting-memory
+    {
+      [act_mem_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [act_mem_00002  >  (aether-connect-adapter openclaw "ws://localhost:3001" {})   .:  ?a]
+      [act_mem_00003  >  (aether-act memory-store {:Key "test-key" :Content "test-value"})   .:  stored]
+      [act_mem_00004  >  (var ?mr (aether-act memory-search {:Query "test" :Limit 5}))   .:  ?mr]
+      [act_mem_00005  >  (confirm (> (# (:Results ?mr)) 0) since "Should find stored entry.")]
+      [act_mem_00006  >  (aether-act memory-delete {:Key "test-key"})   .:  deleted]
+      [act_mem_00007  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+    (suite Aether.acting-cron
+    {
+      [act_cron_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [act_cron_00002  >  (aether-connect-adapter openclaw "ws://localhost:3001" {})   .:  ?a]
+      [act_cron_00003  >  (aether-act cron-schedule {:Expression "*/5 * * * *" :Job "test-poll" :Description "test"})   .:  scheduled]
+      [act_cron_00004  >  (aether-act cron-cancel {:JobId test-poll})   .:  cancelled]
+      [act_cron_00005  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 6  Percept Formation
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite Aether.percept-formation
+
+      (test "make-percept produces well-formed PERCEPT tuple"
+        (require Aether from "pkg/aether/aether.package")
+        (load "pkg/aether/aether-psyche.theory")
+        (var ?p (make-percept Web search-result "https://google.com"
+                  {:Query "test" :Rank 1 :Title "Test" :Snippet "..."}))
+        (confirm (= (:Modality ?p) Aether) since ":Modality should be Aether.")
+        (confirm (= (:Channel ?p) Web) since ":Channel should be Web.")
+        (confirm (= (:Data ?p) search-result) since ":Data should be search-result.")
+        (confirm (= (:Address ?p) "https://google.com") since ":Address should be the URL.")
+        (confirm (/= (:Content ?p) nil) since ":Content should carry the idiom.")
+        (confirm (= (:Query (:Content ?p)) "test") since ":Content :Query should be test.")
+        (confirm (> (:Moment ?p) 0) since ":Moment should be set."))
+
+      (test "make-result produces well-formed RESULT tuple"
+        (load "pkg/aether/aether-psyche.theory")
+        (var ?r (make-result exec succeeded {:Stdout "hello"}))
+        (confirm (= (:Action ?r) exec) since ":Action should be exec.")
+        (confirm (= (:Status ?r) succeeded) since ":Status should be succeeded.")
+        (confirm (> (:Moment ?r) 0) since ":Moment should be set."))
+
+      (test "make-urge produces well-formed URGE tuple"
+        (load "pkg/aether/aether-psyche.theory")
+        (var ?u (make-urge connectivity System 1.0))
+        (confirm (= (:Need ?u) connectivity) since ":Need should be connectivity.")
+        (confirm (= (:Source ?u) System) since ":Source should be System.")
+        (confirm (= (:Delta ?u) 1.0) since ":Delta should be 1.0.")))
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 7  Urge Generation
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite Aether.urge-generation
+
+      (test "Monitor detects disconnected adapter"
+        (require Aether from "pkg/aether/aether.package")
+        (load "pkg/aether/aether-psyche.theory")
+        (aether-connect-adapter openclaw "ws://localhost:3001" {})
+        (aether-disconnect-adapter openclaw)
+        (with Adapter {:Status disconnected :Name ?name}
+          (confirm (= ?name openclaw) since "Should find disconnected openclaw."))))
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 8  Convenience Functions
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite Aether.convenience
+    {
+      [conv_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [conv_00002  >  (aether-connect-adapter openclaw "ws://localhost:3001" {})   .:  ?a]
+      [conv_00003  >  (var ?r (aether-exec "echo convenience"))   .:  ?r]
+      [conv_00004  >  (confirm (= (:ExitCode ?r) 0) since "Echo should exit 0.")]
+      [conv_00005  >  (var ?sr (aether-search "premise" 2))   .:  ?sr]
+      [conv_00006  >  (confirm (> (# ?sr) 0) since "Should return results.")]
+      [conv_00007  >  (aether-write "/tmp/conv-test.txt" "hello")   .:  ?w]
+      [conv_00008  >  (var ?fc (aether-read "/tmp/conv-test.txt"))   .:  ?fc]
+      [conv_00009  >  (confirm (/= ?fc nil) since "Should return file content.")]
+      [conv_00010  >  (aether-remember "conv-key" "conv-value")   .:  stored]
+      [conv_00011  >  (var ?mr (aether-recall "conv"))   .:  ?mr]
+      [conv_00012  >  (confirm (> (# (:Results ?mr)) 0) since "Should recall stored entry.")]
+      [conv_00013  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; ═══════════════════════════════════════════════════════════
+  ;; § 9  Full Lifecycle
+  ;; ═══════════════════════════════════════════════════════════
+
+    (suite Aether.full-lifecycle
+    {
+      [full_00001  >  (require Aether from "pkg/aether/aether.package")   .:  Aether]
+      [full_00002  >  (aether-connect-adapter openclaw "ws://localhost:3001" {})   .:  ?oc]
+      [full_00003  >  (confirm (= (:Status ?oc) connected) since "OpenClaw should be connected.")]
+      [full_00004  >  (var ?sr (aether-search "aether psyche" 2))   .:  ?sr]
+      [full_00005  >  (confirm (> (# ?sr) 0) since "Search should return results.")]
+      [full_00006  >  (aether-write "/tmp/full-test.txt" "round trip")   .:  ?w]
+      [full_00007  >  (var ?fc (aether-read "/tmp/full-test.txt"))   .:  ?fc]
+      [full_00008  >  (confirm (/= ?fc nil) since "File read should return content.")]
+      [full_00009  >  (var ?pe (aether-exec "echo full-lifecycle"))   .:  ?pe]
+      [full_00010  >  (confirm (= (:ExitCode ?pe) 0) since "Echo should exit 0.")]
+      [full_00011  >  (var ?ms (aether-act message-send {:Channel test :ChannelId "full" :Text "lifecycle"}))   .:  ?ms]
+      [full_00012  >  (confirm (= (:Status ?ms) sent) since "Message should be sent.")]
+      [full_00013  >  (aether-remember "full-key" "full-value")   .:  stored]
+      [full_00014  >  (var ?mr (aether-recall "full"))   .:  ?mr]
+      [full_00015  >  (confirm (> (# (:Results ?mr)) 0) since "Should recall stored entry.")]
+      [full_00016  >  (aether-act memory-delete {:Key "full-key"})   .:  deleted]
+      [full_00017  >  (aether-act cron-schedule {:Expression "*/10 * * * *" :Job "full-poll" :Description "test"})   .:  scheduled]
+      [full_00018  >  (aether-act cron-cancel {:JobId full-poll})   .:  cancelled]
+      [full_00019  >  (var ?sense (aether-sense System))   .:  ?sense]
+      [full_00020  >  (aether-disconnect-all)   .:  disconnected]
+    })
+
+
+) ;; end of Aether suites

@@ -1,0 +1,164 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; port42.package — Port42 Adapter Protocol
+;;;
+;;; Wraps Port42's companion computing bridge API over encrypted WebSocket.
+;;; Port42 provides access to macOS host capabilities: browser, terminal,
+;;; screen, camera, audio, clipboard, filesystem, automation, notifications.
+;;;
+
+(package Port42 {1 0 0}
+
+  memo "Port42 adapter — protocol functions for the Port42 companion computing platform."
+
+
+  ;;; §1  HELPERS
+
+  (function p42-default {variant ?value variant ?fallback}
+    (if (nil-p ?value) ?fallback else ?value))
+
+
+  ;;; §2  CONNECTION
+
+  (function p42-open {string ?url idiom ?options}
+    (var ?conn (open ?url ?options))
+    (when (nil-p ?conn)
+      (signal Failure :Text ($ "Port42: could not connect to" ?url)))
+    ?conn)
+
+  (function p42-close {?handle}
+    (close ?handle)
+    closed)
+
+  (function p42-status {?handle}
+    (var ?s (ask ?handle {api status}))
+    {:Status (if (nil-p ?s) disconnected else connected) :Adapter port42})
+
+
+  ;;; §3  CHANNEL: BROWSER
+
+  (function p42-browser-navigate {?handle string ?url literal ?profile}
+    (ask ?handle {api browser.navigate :url ?url}))
+
+  (function p42-browser-click {?handle string ?selector literal ?profile}
+    (ask ?handle {api browser.click :selector ?selector}))
+
+  (function p42-browser-type {?handle string ?selector string ?text literal ?profile}
+    (tell ?handle {api browser.type :selector ?selector :text ?text})
+    {:Status typed})
+
+  (function p42-browser-exec {?handle string ?script literal ?profile}
+    (ask ?handle {api browser.execute :script ?script}))
+
+  (function p42-browser-capture {?handle literal ?profile}
+    (ask ?handle {api browser.screenshot}))
+
+  (function p42-browser-text {?handle}
+    (ask ?handle {api browser.text}))
+
+  (function p42-browser-html {?handle}
+    (ask ?handle {api browser.html}))
+
+
+  ;;; §4  SCREEN
+
+  (function p42-capture-screen {?handle idiom ?options}
+    (ask ?handle {api screen.capture}))
+
+  (function p42-screen-info {?handle}
+    (ask ?handle {api screen.info}))
+
+  (function p42-window-list {?handle}
+    (ask ?handle {api screen.windows}))
+
+
+  ;;; §5  CAMERA
+
+  (function p42-capture-camera {?handle literal ?deviceId}
+    (ask ?handle {api camera.capture :device ?deviceId}))
+
+  (function p42-camera-stream-start {?handle literal ?deviceId}
+    (tell ?handle {api camera.start :device ?deviceId})
+    streaming)
+
+  (function p42-camera-stream-stop {?handle}
+    (tell ?handle {api camera.stop})
+    stopped)
+
+
+  ;;; §6  AUDIO
+
+  (function p42-speak {?handle string ?text idiom ?options}
+    (tell ?handle {api audio.speak :text ?text
+                   :voice (:Voice ?options)
+                   :rate  (:Rate ?options)})
+    {:Status spoken})
+
+  (function p42-audio-capture {?handle integer ?duration}
+    (ask ?handle {api audio.capture :duration ?duration :transcribe true}))
+
+
+  ;;; §7  CLIPBOARD
+
+  (function p42-clipboard-read {?handle}
+    (ask ?handle {api clipboard.read}))
+
+  (function p42-clipboard-write {?handle variant ?content literal ?contentType}
+    (tell ?handle {api clipboard.write :content ?content :type ?contentType})
+    {:Status written})
+
+
+  ;;; §8  AUTOMATION (AppleScript / JXA)
+
+  (function p42-automation-run {?handle string ?script literal ?language integer ?timeout}
+    (ask ?handle {api automation.run :script ?script :language ?language :timeout ?timeout}))
+
+
+  ;;; §9  NOTIFICATIONS
+
+  (function p42-notify {?handle string ?title string ?body}
+    (tell ?handle {api notify.send :title ?title :body ?body})
+    {:Status notified})
+
+
+  ;;; §10  REST (HTTP with Keychain credentials)
+
+  (function p42-rest-call {?handle string ?url literal ?method idiom ?options}
+    (ask ?handle {api rest.call :url ?url :method ?method
+                  :headers (:Headers ?options)
+                  :body    (:Body ?options)
+                  :secret  (:Secret ?options)}))
+
+
+  ;;; §11  GENERIC DISPATCH
+
+  (function p42-dispatch {?handle literal ?action idiom ?params}
+    (case ?action
+      of browser-navigate  (p42-browser-navigate ?handle (:Url ?params) (p42-default (:Profile ?params) default))
+      of browser-click     (p42-browser-click ?handle (:Selector ?params) (p42-default (:Profile ?params) default))
+      of browser-type      (p42-browser-type ?handle (:Selector ?params) (:Text ?params) (p42-default (:Profile ?params) default))
+      of browser-execute   (p42-browser-exec ?handle (:Script ?params) (p42-default (:Profile ?params) default))
+      of browser-capture   (p42-browser-capture ?handle (p42-default (:Profile ?params) default))
+      of capture-screen    (p42-capture-screen ?handle ?params)
+      of capture-camera    (p42-capture-camera ?handle (p42-default (:DeviceId ?params) Camera1))
+      of speak             (p42-speak ?handle (:Text ?params) ?params)
+      of clipboard-write   (p42-clipboard-write ?handle (:Content ?params) (p42-default (:ContentType ?params) text))
+      of automation-run    (p42-automation-run ?handle (:Script ?params) (p42-default (:Language ?params) applescript) (p42-default (:Timeout ?params) 30))
+      of notify            (p42-notify ?handle (:Title ?params) (:Body ?params))
+      of rest-call         (p42-rest-call ?handle (:Url ?params) (p42-default (:Method ?params) GET) ?params)
+      else                 (signal Failure :Text ($ "Port42: unknown action" ?action))))
+
+)

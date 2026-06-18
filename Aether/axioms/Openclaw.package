@@ -1,0 +1,253 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; openclaw.package — OpenClaw Adapter Protocol
+;;;
+;;; Wraps OpenClaw's 26 built-in tools and MCP skill calls.
+;;; Communicates via tell/ask over TCP or WebSocket.
+;;;
+;;; OpenClaw tool groups:
+;;;   runtime   — exec, bash, process
+;;;   fs        — read, write, edit, apply_patch
+;;;   web       — web_search, web_fetch
+;;;   ui        — browser, canvas
+;;;   sessions  — sessions_list, sessions_history, sessions_send, sessions_spawn
+;;;   memory    — memory_search, memory_get
+;;;   messaging — message
+;;;   automation— cron, gateway
+;;;
+
+(package OpenClaw {1 0 0}
+
+  memo "OpenClaw adapter — protocol functions for the OpenClaw agent framework."
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §1  HELPERS
+  ;;; ══════════════════════════════════════════════════════════
+
+  ;;; (oc-default value fallback) → value if not nil, else fallback
+  (function oc-default {variant ?value variant ?fallback}
+    (if (nil-p ?value) ?fallback else ?value))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §2  CONNECTION
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-open {string ?url idiom ?options}
+    (var ?conn (open ?url ?options))
+    (when (nil-p ?conn)
+      (signal Failure :Text ($ "OpenClaw: could not connect to" ?url)))
+    ?conn)
+
+  (function oc-close {?handle}
+    (close ?handle)
+    closed)
+
+  (function oc-status {?handle}
+    (var ?s (ask ?handle "status"))
+    {:Status (if (nil-p ?s) disconnected else connected) :Adapter openclaw})
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §3  CHANNEL: WEB
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-web-search {?handle string ?query integer ?max}
+    (ask ?handle {:tool web_search :query ?query :max_results ?max}))
+
+  (function oc-web-fetch {?handle string ?url integer ?maxChars}
+    (ask ?handle {:tool web_fetch :url ?url :max_chars ?maxChars}))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §4  CHANNEL: FILESYSTEM
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-file-read {?handle string ?path}
+    (ask ?handle {:tool read :path ?path}))
+
+  (function oc-file-write {?handle string ?path string ?content}
+    (tell ?handle {:tool write :path ?path :content ?content})
+    {:EventType created :Path ?path})
+
+  (function oc-file-edit {?handle string ?path string ?old string ?new}
+    (tell ?handle {:tool edit :path ?path :old_text ?old :new_text ?new})
+    {:EventType modified :Path ?path})
+
+  (function oc-file-patch {?handle string ?path string ?patch}
+    (tell ?handle {:tool apply_patch :path ?path :patch ?patch})
+    {:EventType modified :Path ?path})
+
+  (function oc-dir-list {?handle string ?path}
+    (ask ?handle {:tool read :path ?path}))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §5  CHANNEL: PROCESS
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-exec {?handle string ?command idiom ?options}
+    (ask ?handle {:tool exec :command ?command
+                  :working_directory (:WorkingDirectory ?options)
+                  :timeout (:Timeout ?options)}))
+
+  (function oc-exec-bg {?handle string ?command idiom ?options}
+    (var ?r (ask ?handle {:tool exec :command ?command :background true
+                          :yield_ms (:YieldMs ?options)}))
+    (:session_id ?r))
+
+  (function oc-process-kill {?handle literal ?sid}
+    (tell ?handle {:tool process :session_id ?sid :action kill})
+    killed)
+
+  (function oc-process-write {?handle literal ?sid string ?input}
+    (tell ?handle {:tool process :session_id ?sid :action write :input ?input})
+    written)
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §6  CHANNEL: MESSAGE
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-message-send {?handle literal ?channel string ?channelId string ?text}
+    (tell ?handle {:tool message :channel ?channel :channel_id ?channelId :text ?text})
+    {:Status sent :Channel ?channel})
+
+  (function oc-message-poll {?handle}
+    (ask ?handle {:tool message :action poll}))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §7  CHANNEL: BROWSER
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-browser-navigate {?handle string ?url literal ?profile}
+    (ask ?handle {:tool browser :action navigate :url ?url :profile ?profile}))
+
+  (function oc-browser-click {?handle string ?selector literal ?profile}
+    (ask ?handle {:tool browser :action click :selector ?selector :profile ?profile}))
+
+  (function oc-browser-type {?handle string ?selector string ?text literal ?profile}
+    (ask ?handle {:tool browser :action type :selector ?selector :text ?text :profile ?profile}))
+
+  (function oc-browser-exec {?handle string ?script literal ?profile}
+    (ask ?handle {:tool browser :action execute :script ?script :profile ?profile}))
+
+  (function oc-browser-capture {?handle literal ?profile}
+    (ask ?handle {:tool browser :action snapshot :profile ?profile}))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §8  CHANNEL: MEMORY
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-memory-search {?handle string ?query integer ?limit}
+    (ask ?handle {:tool memory_search :query ?query :limit ?limit}))
+
+  (function oc-memory-store {?handle string ?key variant ?content literal ?scope}
+    (tell ?handle {:tool memory_store :key ?key :content ?content :scope ?scope})
+    stored)
+
+  (function oc-memory-delete {?handle string ?key literal ?scope}
+    (tell ?handle {:tool memory_delete :key ?key :scope ?scope})
+    deleted)
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §9  CHANNEL: SESSIONS (Multi-Agent)
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-agent-spawn {?handle idiom ?config}
+    (var ?r (ask ?handle {:tool sessions_spawn :task (:Task ?config) :context (:Context ?config)}))
+    (:session_id ?r))
+
+  (function oc-agent-send {?handle literal ?sid variant ?content}
+    (tell ?handle {:tool sessions_send :session_id ?sid :content ?content})
+    {:Status sent :SessionId ?sid})
+
+  (function oc-agent-poll {?handle literal ?sid}
+    (ask ?handle {:tool sessions_history :session_id ?sid}))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §10  CHANNEL: SYSTEM
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-cron-schedule {?handle string ?expr string ?job string ?desc}
+    (tell ?handle {:tool cron :action add :expression ?expr :job ?job :description ?desc})
+    scheduled)
+
+  (function oc-cron-cancel {?handle literal ?jobId}
+    (tell ?handle {:tool cron :action remove :job_id ?jobId})
+    cancelled)
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §11  CHANNEL: EMBODIMENT (via ClawBody / ROS 2)
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-drive {?handle real ?linear real ?angular integer ?duration}
+    (ask ?handle {:tool clawbody :action drive :linear ?linear :angular ?angular :duration ?duration}))
+
+  (function oc-joint {?handle literal ?jointId real ?position real ?velocity}
+    (ask ?handle {:tool clawbody :action joint :joint_id ?jointId :position ?position :velocity ?velocity}))
+
+  (function oc-capture-camera {?handle literal ?deviceId}
+    (ask ?handle {:tool clawbody :action capture :device_id ?deviceId}))
+
+  (function oc-sensor-read {?handle literal ?deviceId literal ?sensorType}
+    (ask ?handle {:tool clawbody :action sensor :device_id ?deviceId :sensor_type ?sensorType}))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §12  GENERIC DISPATCH
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function oc-dispatch {?handle literal ?action idiom ?params}
+    (case ?action
+      of exec              (oc-exec ?handle (:Command ?params) ?params)
+      of exec-background   (oc-exec-bg ?handle (:Command ?params) ?params)
+      of process-kill      (oc-process-kill ?handle (:SessionId ?params))
+      of process-write     (oc-process-write ?handle (:SessionId ?params) (:Input ?params))
+      of file-create       (oc-file-write ?handle (:Path ?params) (:Content ?params))
+      of file-overwrite    (oc-file-write ?handle (:Path ?params) (:Content ?params))
+      of file-edit         (oc-file-edit ?handle (:Path ?params) (:OldText ?params) (:NewText ?params))
+      of file-patch        (oc-file-patch ?handle (:Path ?params) (:Patch ?params))
+      of file-delete       (oc-exec ?handle ($ "rm" (:Path ?params)) {})
+      of file-move         (oc-exec ?handle ($ "mv" (:SourcePath ?params) (:DestinationPath ?params)) {})
+      of web-search        (oc-web-search ?handle (:Query ?params) (oc-default (:MaxResults ?params) 5))
+      of web-fetch         (oc-web-fetch ?handle (:Url ?params) (oc-default (:MaxChars ?params) 50000))
+      of browser-navigate  (oc-browser-navigate ?handle (:Url ?params) (oc-default (:Profile ?params) default))
+      of browser-click     (oc-browser-click ?handle (:Selector ?params) (oc-default (:Profile ?params) default))
+      of browser-type      (oc-browser-type ?handle (:Selector ?params) (:Text ?params) (oc-default (:Profile ?params) default))
+      of browser-execute   (oc-browser-exec ?handle (:Script ?params) (oc-default (:Profile ?params) default))
+      of browser-capture   (oc-browser-capture ?handle (oc-default (:Profile ?params) default))
+      of message-send      (oc-message-send ?handle (:Channel ?params) (:ChannelId ?params) (:Text ?params))
+      of agent-send        (oc-agent-send ?handle (:SessionId ?params) (:Content ?params))
+      of agent-spawn       (oc-agent-spawn ?handle ?params)
+      of memory-store      (oc-memory-store ?handle (:Key ?params) (:Content ?params) (oc-default (:Scope ?params) channel))
+      of memory-delete     (oc-memory-delete ?handle (:Key ?params) (oc-default (:Scope ?params) channel))
+      of cron-schedule     (oc-cron-schedule ?handle (:Expression ?params) (:Job ?params) (oc-default (:Description ?params) ""))
+      of cron-cancel       (oc-cron-cancel ?handle (:JobId ?params))
+      of rest-call         (ask ?handle {:tool web_fetch :url (:Url ?params) :method (:Method ?params) :headers (:Headers ?params)})
+      of drive-command     (oc-drive ?handle (:LinearVelocity ?params) (:AngularVelocity ?params) (:Duration ?params))
+      of joint-command     (oc-joint ?handle (:JointId ?params) (:Position ?params) (:Velocity ?params))
+      of capture-camera    (oc-capture-camera ?handle (oc-default (:DeviceId ?params) Camera1))
+      of capture-screen    (ask ?handle {:tool exec :command "screencapture /tmp/screen.png"})
+      else                 (signal Failure :Text ($ "OpenClaw: unknown action" ?action))))
+
+)

@@ -1,0 +1,193 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; aether.package — Aether Unified Protocol Layer
+;;;
+;;; Requires the three adapter packages (openclaw, omegaclaw, port42) and
+;;; provides uniform functions that route to the correct adapter based on
+;;; the Aether.daicho configuration.
+;;;
+
+(package Aether {1 0 0}
+
+  memo    "Aether — unified protocol layer for the internet-world Psyche."
+  requires {OpenClaw OmegaClaw Port42}
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §1  ADAPTER REGISTRY
+  ;;; ══════════════════════════════════════════════════════════
+
+  (relation Adapter
+    :M
+    :Name          nil        ; openclaw | omegaclaw | port42
+    :Handle        nil        ; connection handle from open
+    :Status        nil        ; connected | disconnected
+    :Channels      nil        ; list of channel literals
+    :Capabilities  nil        ; list of action literals
+  )
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §2  LIFECYCLE
+  ;;; ══════════════════════════════════════════════════════════
+
+  ;;; (aether-connect-adapter name url options) → Adapter thought
+  (function aether-connect-adapter {literal ?name string ?url idiom ?options}
+    (var ?handle
+      (case ?name
+        of openclaw   (oc-open ?url ?options)
+        of omegaclaw  (omega-open ?url ?options)
+        of port42     (p42-open ?url ?options)
+        else          (signal Failure :Text ($ "Aether: unknown adapter" ?name))))
+    (var ?channels     (setting Aether ?name :Channels))
+    (var ?capabilities (setting Aether ?name :Capabilities))
+    (new Adapter :Name ?name :Handle ?handle :Status connected
+                 :Channels ?channels :Capabilities ?capabilities))
+
+  ;;; (aether-disconnect-adapter name) → disconnected
+  (function aether-disconnect-adapter {literal ?name}
+    (with Adapter {:Name ?name :Handle ?handle}
+      (case ?name
+        of openclaw   (oc-close ?handle)
+        of omegaclaw  (omega-close ?handle)
+        of port42     (p42-close ?handle))
+      (put Adapter :Status disconnected))
+    disconnected)
+
+  ;;; (aether-connect-all) → list of Adapter thoughts
+  (function aether-connect-all {}
+    (var ?adapters {})
+    (for ?name in {openclaw omegaclaw port42}
+      (var ?auto (setting Aether ?name :AutoConnect))
+      (when (= ?auto yes)
+        (var ?url (setting Aether ?name :Url))
+        (var ?opts {:Timeout (setting Aether ?name :Timeout)})
+        (append ?adapters (aether-connect-adapter ?name ?url ?opts))))
+    ?adapters)
+
+  ;;; (aether-disconnect-all) → disconnected
+  (function aether-disconnect-all {}
+    (for ?name in {openclaw omegaclaw port42}
+      (with Adapter {:Name ?name :Status connected}
+        (aether-disconnect-adapter ?name)))
+    disconnected)
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §3  ROUTING
+  ;;; ══════════════════════════════════════════════════════════
+
+  ;;; (aether-route channel) → {:Name name :Handle handle}
+  (function aether-route {literal ?channel}
+    (var ?priority (setting Aether Routing ?channel))
+    (var ?found nil)
+    (for ?name in ?priority
+      (when (nil-p ?found)
+        (with Adapter {:Name ?name :Status connected :Handle ?h}
+          (set ?found {:Name ?name :Handle ?h}))))
+    (when (nil-p ?found)
+      (signal Failure :Text ($ "Aether: no connected adapter for channel" ?channel)))
+    ?found)
+
+  ;;; (aether-route-action action) → {:Name name :Handle handle}
+  (function aether-route-action {literal ?action}
+    (var ?found nil)
+    (with Adapter {:Status connected :Capabilities ?caps :Handle ?h :Name ?name}
+      (when (and (nil-p ?found) (contains ?caps ?action))
+        (set ?found {:Name ?name :Handle ?h})))
+    (when (nil-p ?found)
+      (signal Failure :Text ($ "Aether: no adapter supports action" ?action)))
+    ?found)
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §4  SENSING (PERCEPT GENERATION)
+  ;;; ══════════════════════════════════════════════════════════
+
+  ;;; (aether-sense channel) → list of percept idioms or nil
+  (function aether-sense {literal ?channel}
+    (var ?route (aether-route ?channel))
+    (var ?handle (:Handle ?route))
+    (var ?name   (:Name ?route))
+    (case ?name
+      of openclaw   (case ?channel
+                      of Message  (oc-message-poll ?handle)
+                      of System   (ask ?handle {:tool gateway :action status})
+                      else nil)
+      of omegaclaw  (case ?channel
+                      of Message  (omega-message-poll ?handle)
+                      else nil)
+      of port42     (case ?channel
+                      of Embodiment  {(p42-clipboard-read ?handle)
+                                      (p42-window-list ?handle)}
+                      else nil)
+      else nil))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §5  ACTING (ATTEMPT DISPATCH)
+  ;;; ══════════════════════════════════════════════════════════
+
+  ;;; (aether-act action parameters) → result idiom
+  (function aether-act {literal ?action idiom ?params}
+    (var ?route (aether-route-action ?action))
+    (var ?handle (:Handle ?route))
+    (var ?name   (:Name ?route))
+    (case ?name
+      of openclaw   (oc-dispatch ?handle ?action ?params)
+      of omegaclaw  (omega-dispatch ?handle ?action ?params)
+      of port42     (p42-dispatch ?handle ?action ?params)
+      else          (signal Failure :Text ($ "Aether: no adapter for action" ?action))))
+
+
+  ;;; ══════════════════════════════════════════════════════════
+  ;;; §6  CONVENIENCE FUNCTIONS
+  ;;; ══════════════════════════════════════════════════════════
+
+  (function aether-search {string ?query integer ?max}
+    (aether-act web-search {:Query ?query :MaxResults ?max}))
+
+  (function aether-fetch {string ?url}
+    (aether-act web-fetch {:Url ?url :MaxChars 50000}))
+
+  (function aether-exec {string ?command}
+    (aether-act exec {:Command ?command}))
+
+  (function aether-read {string ?path}
+    (aether-act file-read {:Path ?path}))
+
+  (function aether-write {string ?path string ?content}
+    (aether-act file-create {:Path ?path :Content ?content}))
+
+  (function aether-send {literal ?channel string ?channelId string ?text}
+    (aether-act message-send {:Channel ?channel :ChannelId ?channelId :Text ?text}))
+
+  (function aether-remember {string ?key variant ?content}
+    (aether-act memory-store {:Key ?key :Content ?content}))
+
+  (function aether-recall {string ?query}
+    (aether-act memory-search {:Query ?query :Limit 5}))
+
+  (function aether-assert {idiom ?scheme}
+    (aether-act knowledge-assert ?scheme))
+
+  (function aether-infer-nal {list ?premises string ?query}
+    (aether-act nal-infer {:Premises ?premises :Query ?query :Depth 3}))
+
+  (function aether-infer-pln {list ?premises string ?query}
+    (aether-act pln-infer {:Premises ?premises :Query ?query :ConfidenceThreshold 0.5}))
+
+)
