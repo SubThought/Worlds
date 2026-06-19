@@ -1,0 +1,281 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; ros-psyche.theory — Generic ROS 2 Robot Psyche
+;;;
+;;; A standalone Psyche for any ROS 2-compliant robot.  Uses only standard
+;;; ROS 2 topics (/joint_states, /cmd_vel, /odom, /imu, /camera/image_raw,
+;;; /scan, /diagnostics, /tf, /navigate_to_pose, /follow_joint_trajectory).
+;;;
+;;; No platform-specific knowledge is required.  Works with any robot that
+;;; exposes the standard ROS 2 interface — real or simulated (Gazebo,
+;;; Isaac Sim, MuJoCo).
+;;;
+;;; The robot name and URL are read from the daicho.  Percepts carry
+;;; :Modality set to the robot name from [Psyche :Name].
+;;;
+;;; Use this psyche when:
+;;;   - You have a ROS 2 robot with no platform-specific package yet
+;;;   - You are working with a simulated robot in Gazebo or Isaac Sim
+;;;   - You want a quick connection to any ROS 2-compliant platform
+;;;
+;;; Use a platform-specific psyche (nao-psyche, g2-psyche, etc.) when
+;;; you need access to platform-specific capabilities beyond standard topics.
+;;;
+;;; All percepts carry :Modality <robot-name>.
+;;;
+
+
+(require ROS from "pkg/expanse/ros.package")
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §1  CONFIGURATION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?robot-name     (setting ROS-Psyche Psyche :Name))
+(var ?psyche-url     (setting ROS-Psyche Psyche :Url))
+(var ?psyche-delay   (setting ROS-Psyche Psyche :Delay))
+(var ?robot-url      (setting ROS-Psyche Robot :Url))
+(var ?perceiver-url  (setting GIL Perceiver :Url))
+(var ?registrar-url  (setting GIL Registrar :Url))
+
+;;; Topic overrides — read from daicho or use standard defaults
+(var ?topic-camera   (setting ROS-Psyche Topics :Camera))
+(var ?topic-depth    (setting ROS-Psyche Topics :Depth))
+(var ?topic-lidar    (setting ROS-Psyche Topics :Lidar))
+(var ?topic-audio    (setting ROS-Psyche Topics :Audio))
+(var ?topic-imu      (setting ROS-Psyche Topics :Imu))
+(var ?topic-battery  (setting ROS-Psyche Topics :Battery))
+
+(if (nil-p ?topic-camera)   (set ?topic-camera  "/camera/image_raw"))
+(if (nil-p ?topic-depth)    (set ?topic-depth   "/camera/depth"))
+(if (nil-p ?topic-lidar)    (set ?topic-lidar   "/scan"))
+(if (nil-p ?topic-audio)    (set ?topic-audio   "/audio/raw"))
+(if (nil-p ?topic-imu)      (set ?topic-imu     "/imu"))
+(if (nil-p ?topic-battery)  (set ?topic-battery "/battery"))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §2  DEVICE REGISTRATION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?token
+  (ask ?registrar-url
+    {device   ?robot-name
+     type     Psyche
+     modality ?robot-name
+     channels {Visual Auditory Haptic Proprioceptive Spatial System}
+     needs    {power thermal balance connectivity}
+     actuations {walk turn stop navigate
+                 look
+                 joint-move trajectory
+                 speak
+                 capture-photo
+                 e-stop}}))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §3  ROBOT CONNECTION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?handle (ros-open ?robot-url {}))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §4  TUPLE CONSTRUCTORS
+;;; ═══════════════════════════════════════════════════════════════
+
+(function make-percept {literal ?channel literal ?data variant ?address idiom ?content}
+  (var ?percept
+    [PERCEPT :Modality ?robot-name
+             :Channel  ?channel
+             :Address  ?address
+             :Data     ?data
+             :Content  ?content
+             :Moment   (moment)
+             :Token    ?token])
+  (tell ?perceiver-url ?percept)
+  ?percept)
+
+(function make-result {literal ?action literal ?status variant ?reason}
+  (var ?result
+    [RESULT :Action ?action
+            :Status ?status
+            :Reason ?reason
+            :Moment (moment)
+            :Token  ?token])
+  (tell ?perceiver-url ?result)
+  ?result)
+
+(function make-urge {literal ?need literal ?source real ?delta}
+  (var ?urge
+    [URGE :Need   ?need
+          :Source ?source
+          :Delta  ?delta
+          :Moment (moment)
+          :Token  ?token])
+  (tell ?perceiver-url ?urge)
+  ?urge)
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §5  POLLING BOOKKEEPING
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?poll-times {})
+(var ?monitor-last 0)
+
+(function due? {literal ?channel integer ?interval}
+  (var ?last (get ?poll-times ?channel))
+  (if (nil-p ?last) yes
+    else (>= (- (moment) ?last) ?interval)))
+
+(function mark-polled {literal ?channel}
+  (set ?poll-times (put ?poll-times ?channel (moment))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §6  HELPERS
+;;; ═══════════════════════════════════════════════════════════════
+
+(function infer-data-type {idiom ?raw}
+  (if (/= (:Width ?raw)          nil)  camera-frame
+   or (/= (:SampleRate ?raw)     nil)  audio-sample
+   or (/= (:Joints ?raw)         nil)  joint-state
+   or (/= (:Orientation ?raw)    nil)  imu-reading
+   or (/= (:Voltage ?raw)        nil)  battery-state
+   or (/= (:Position ?raw)       nil)  odometry
+   or (/= (:Ranges ?raw)         nil)  laser-scan
+   or (/= (:Component ?raw)      nil)  diagnostic
+   else                                unknown))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §7  JOB (proactive): sensing + monitoring
+;;;
+;;; Uses only standard ROS 2 topics.
+;;; ═══════════════════════════════════════════════════════════════
+
+(function ros-psyche-job {}
+
+  ;;; ── Visual ──
+  (when (due? Visual \@m{0.3})
+    (var ?frame (ros-camera-read ?handle ?topic-camera))
+    (when (/= ?frame nil)
+      (make-percept Visual camera-frame ?topic-camera ?frame))
+    (try
+      (var ?depth (ros-depth-read ?handle ?topic-depth))
+      (when (/= ?depth nil)
+        (make-percept Visual depth-map ?topic-depth ?depth))
+    learn ?err nil)
+    (mark-polled Visual))
+
+  ;;; ── Auditory ──
+  (when (due? Auditory \@m{0.5})
+    (try
+      (var ?audio (ros-audio-read ?handle ?topic-audio))
+      (when (/= ?audio nil)
+        (make-percept Auditory audio-sample ?topic-audio ?audio))
+    learn ?err nil)
+    (mark-polled Auditory))
+
+  ;;; ── Proprioceptive ──
+  (when (due? Proprioceptive \@m{0.2})
+    (var ?joints (ros-joint-states ?handle))
+    (when (/= ?joints nil)
+      (make-percept Proprioceptive joint-state "/joint_states" ?joints))
+    (try
+      (var ?imu (ros-imu-read ?handle ?topic-imu))
+      (when (/= ?imu nil)
+        (make-percept Proprioceptive imu-reading ?topic-imu ?imu))
+    learn ?err nil)
+    (mark-polled Proprioceptive))
+
+  ;;; ── Spatial ──
+  (when (due? Spatial \@m{1})
+    (var ?odom (ros-odom-read ?handle))
+    (when (/= ?odom nil)
+      (make-percept Spatial odometry "/odom" ?odom))
+    (try
+      (var ?scan (ros-lidar-read ?handle ?topic-lidar))
+      (when (/= ?scan nil)
+        (make-percept Spatial laser-scan ?topic-lidar ?scan))
+    learn ?err nil)
+    (mark-polled Spatial))
+
+  ;;; ── System ──
+  (when (due? System \@m{15})
+    (try
+      (var ?diag (ros-diagnostics ?handle))
+      (when (/= ?diag nil)
+        (for ?d in ?diag
+          (make-percept System diagnostic nil ?d)))
+    learn ?err nil)
+    (mark-polled System))
+
+
+  ;;; ── Monitoring ──
+  (when (>= (- (moment) ?monitor-last) \@m{10})
+
+    ;;; Battery
+    (try
+      (var ?batt (ros-battery-read ?handle ?topic-battery))
+      (when (and (/= ?batt nil) (< (:Percentage ?batt) 0.15))
+        (make-urge power Proprioceptive (- 1.0 (:Percentage ?batt))))
+    learn ?err nil)
+
+    ;;; Balance (via IMU pitch/roll)
+    (try
+      (var ?imu (ros-imu-read ?handle ?topic-imu))
+      (when (/= ?imu nil)
+        (var ?pitch (abs (:Pitch (:Orientation ?imu))))
+        (var ?roll  (abs (:Roll (:Orientation ?imu))))
+        (when (> (+ ?pitch ?roll) 0.3)
+          (make-urge balance Proprioceptive (+ ?pitch ?roll))))
+    learn ?err nil)
+
+    (set ?monitor-last (moment))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §8  HANDLER (reactive): actuation
+;;;
+;;; Dispatches through ros-dispatch (standard ROS 2 actions only).
+;;; ═══════════════════════════════════════════════════════════════
+
+(function ros-psyche-handler {url ?sender string ?message}
+  (when (= (@ ?message 1) ATTEMPT)
+    (var ?action (:Action ?message))
+    (var ?params (:Parameters ?message))
+    (try
+      (var ?raw (ros-dispatch ?handle ?action ?params))
+      (make-result ?action succeeded ?raw)
+    learn ?err
+      (make-result ?action failed (string ?err)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §9  THE AGENT
+;;; ═══════════════════════════════════════════════════════════════
+
+(agent ?robot-name ros-psyche-job ?psyche-url ros-psyche-handler ?psyche-delay {sensing acting monitoring})
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §10  STARTUP
+;;; ═══════════════════════════════════════════════════════════════
+
+(tell user ($ ?robot-name "Psyche ready."))

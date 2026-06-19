@@ -1,0 +1,248 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; expanse-psyche.theory — The Expanse Psyche
+;;;
+;;; The Expanse is a Psyche: the interface between a GIL mind and the
+;;; three-dimensional physical world.  Single agent with:
+;;;
+;;;   Job (proactive)     — polls sensory channels, wraps as PERCEPTs.
+;;;                         Monitors homeostatic conditions, emits URGEs.
+;;;
+;;;   Handler (reactive)  — receives ATTEMPTs from the Executor,
+;;;                         dispatches through expanse-act, returns RESULTs.
+;;;
+;;; All percepts carry :Modality Expanse.
+;;;
+
+
+(require Expanse    from "pkg/expanse/expanse.package")
+(require GenericROS2 from "pkg/expanse/generic-ros2.package")
+(require Figure    from "pkg/expanse/figure.package")
+(require Optimus   from "pkg/expanse/optimus.package")
+(require NAO       from "pkg/expanse/nao.package")
+(require G2        from "pkg/expanse/g2.package")
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §1  CONFIGURATION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?psyche-url     (setting Expanse Psyche :Url))
+(var ?psyche-port    (setting Expanse Psyche :Port))
+(var ?psyche-delay   (setting Expanse Psyche :Delay))
+(var ?perceiver-url  (setting GIL Perceiver :Url))
+(var ?registrar-url  (setting GIL Registrar :Url))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §2  DEVICE REGISTRATION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?token
+  (ask ?registrar-url
+    {device   Expanse
+     type     Psyche
+     modality Expanse
+     channels {Visual Auditory Haptic Proprioceptive Spatial Olfactory Communication System}
+     needs    {power thermal balance safety connectivity}
+     actuations {walk turn stop step stand sit crouch navigate
+                 look track
+                 reach grasp release push pull lift place
+                 point wave nod shake-head
+                 speak emote display play-sound
+                 joint-move pose-move trajectory set-stiffness set-led
+                 capture-photo start-recording stop-recording
+                 e-stop set-mode}}))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §3  PLATFORM CONNECTIONS
+;;; ═══════════════════════════════════════════════════════════════
+
+(expanse-connect-all)
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §4  TUPLE CONSTRUCTORS
+;;; ═══════════════════════════════════════════════════════════════
+
+(function make-percept {literal ?channel literal ?data variant ?address idiom ?content}
+  (var ?percept
+    [PERCEPT :Modality Expanse
+             :Channel  ?channel
+             :Address  ?address
+             :Data     ?data
+             :Content  ?content
+             :Moment   (moment)
+             :Token    ?token])
+  (tell ?perceiver-url ?percept)
+  ?percept)
+
+(function make-result {literal ?action literal ?status variant ?reason}
+  (var ?result
+    [RESULT :Action ?action
+            :Status ?status
+            :Reason ?reason
+            :Moment (moment)
+            :Token  ?token])
+  (tell ?perceiver-url ?result)
+  ?result)
+
+(function make-urge {literal ?need literal ?source real ?delta}
+  (var ?urge
+    [URGE :Need   ?need
+          :Source ?source
+          :Delta  ?delta
+          :Moment (moment)
+          :Token  ?token])
+  (tell ?perceiver-url ?urge)
+  ?urge)
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §5  POLLING BOOKKEEPING
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?poll-times {})
+(var ?monitor-last 0)
+
+(function due? {literal ?channel integer ?interval}
+  (var ?last (get ?poll-times ?channel))
+  (if (nil-p ?last) yes
+    else (>= (- (moment) ?last) ?interval)))
+
+(function mark-polled {literal ?channel}
+  (set ?poll-times (put ?poll-times ?channel (moment))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §6  HELPERS
+;;; ═══════════════════════════════════════════════════════════════
+
+(function infer-data-type {idiom ?raw}
+  (if (/= (:Width ?raw)          nil)  camera-frame
+   or (/= (:SampleRate ?raw)     nil)  audio-sample
+   or (/= (:Text ?raw)           nil)  transcription
+   or (/= (:Pressure ?raw)       nil)  contact
+   or (/= (:Force ?raw)          nil)  force-reading
+   or (/= (:Joints ?raw)         nil)  joint-state
+   or (/= (:Orientation ?raw)    nil)  imu-reading
+   or (/= (:Voltage ?raw)        nil)  battery-state
+   or (/= (:Position ?raw)       nil)  odometry
+   or (/= (:Latitude ?raw)       nil)  gps-fix
+   or (/= (:Class ?raw)          nil)  object-detected
+   or (/= (:FaceId ?raw)         nil)  face-detected
+   or (/= (:GestureType ?raw)    nil)  gesture-seen
+   or (/= (:EventType ?raw)      nil)  safety-event
+   or (/= (:Component ?raw)      nil)  diagnostic
+   else                                unknown))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §7  JOB (proactive): sensing + monitoring
+;;; ═══════════════════════════════════════════════════════════════
+
+(function expanse-job {}
+
+  ;;; ── Sensing ──
+  (for ?channel in {Visual Auditory Haptic Proprioceptive Spatial Olfactory Communication System}
+    (var ?interval (setting Expanse Polling ?channel))
+    (when (and (> ?interval 0) (due? ?channel ?interval))
+
+      (var ?raw (expanse-sense ?channel))
+      (when (/= ?raw nil)
+        (for ?datum in ?raw
+          (when (/= ?datum nil)
+            (make-percept
+              ?channel
+              (if (nil-p (:Data ?datum)) (infer-data-type ?datum)
+                else (:Data ?datum))
+              (:Address ?datum)
+              ?datum))))
+
+      (mark-polled ?channel)))
+
+
+  ;;; ── Monitoring ──
+  (var ?monitor-interval \@m{10})
+  (when (>= (- (moment) ?monitor-last) ?monitor-interval)
+
+    ;;; Connectivity
+    (with Platform {:Status disconnected :Name ?name}
+      (var ?cfg (setting Expanse Urges :ConnectionLost))
+      (make-urge (:Need ?cfg) (:Source ?cfg) (:Threshold ?cfg)))
+
+    ;;; Battery
+    (try
+      (var ?route (expanse-route Proprioceptive))
+      (var ?batt (ros2-battery-read (:Handle ?route) nil))
+      (when (/= ?batt nil)
+        (var ?pct (:Percentage ?batt))
+        (var ?cfg (setting Expanse Urges :LowBattery))
+        (when (< ?pct (:Threshold ?cfg))
+          (make-urge (:Need ?cfg) (:Source ?cfg) (- 1.0 ?pct))))
+    learn ?err nil)
+
+    ;;; Motor temperature
+    (try
+      (var ?route (expanse-route Proprioceptive))
+      (var ?diag (ros2-diagnostics (:Handle ?route)))
+      (when (/= ?diag nil)
+        (for ?d in ?diag
+          (when (= (:Level ?d) warning)
+            (var ?cfg (setting Expanse Urges :Overheating))
+            (make-urge (:Need ?cfg) (:Source ?cfg) 1.0))))
+    learn ?err nil)
+
+    ;;; Balance
+    (try
+      (var ?route (expanse-route Proprioceptive))
+      (var ?bal (ask (:Handle ?route) {topic "/balance" :type "std_msgs/Bool"}))
+      (when (and (/= ?bal nil) (= (:Stable ?bal) no))
+        (var ?cfg (setting Expanse Urges :Imbalance))
+        (make-urge (:Need ?cfg) (:Source ?cfg) 1.0))
+    learn ?err nil)
+
+    (set ?monitor-last (moment))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §8  HANDLER (reactive): actuation
+;;; ═══════════════════════════════════════════════════════════════
+
+(function expanse-handler {url ?sender string ?message}
+  (when (= (@ ?message 1) ATTEMPT)
+    (var ?action (:Action ?message))
+    (var ?params (:Parameters ?message))
+    (try
+      (var ?raw (expanse-act ?action ?params))
+      (make-result ?action succeeded ?raw)
+    learn ?err
+      (make-result ?action failed (string ?err)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §9  THE AGENT
+;;; ═══════════════════════════════════════════════════════════════
+
+(agent Expanse expanse-job ?psyche-url expanse-handler ?psyche-delay {sensing acting monitoring})
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §10  STARTUP
+;;; ═══════════════════════════════════════════════════════════════
+
+(tell user "Expanse Psyche ready.")

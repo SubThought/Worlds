@@ -1,0 +1,236 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; g2-psyche.theory — Standalone G2 Psyche
+;;;
+;;; A standalone Psyche for the G2 humanoid robot (30+ DOF).
+;;; Connects directly to one G2 robot and the mind.
+;;; Capabilities: agile legged locomotion, LIDAR SLAM, high-speed motor control.
+;;;
+;;; Use this psyche when the Learner inhabits a single G2 body.
+;;; Use expanse-psyche.theory when the Learner needs to switch between
+;;; or coordinate multiple robot platforms.
+;;;
+;;; All percepts carry :Modality G2.
+;;;
+
+
+(require GenericROS2 from "pkg/expanse/generic-ros2.package")
+(require G2      from "pkg/expanse/g2.package")
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §1  CONFIGURATION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?psyche-url     (setting G2 Psyche :Url))
+(var ?psyche-delay   (setting G2 Psyche :Delay))
+(var ?robot-url      (setting G2 Robot :Url))
+(var ?perceiver-url  (setting GIL Perceiver :Url))
+(var ?registrar-url  (setting GIL Registrar :Url))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §2  DEVICE REGISTRATION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?token
+  (ask ?registrar-url
+    {device   G2
+     type     Psyche
+     modality G2
+     channels {Visual Auditory Haptic Proprioceptive Spatial Communication System}
+     needs    {power thermal balance safety connectivity}
+     actuations (setting G2 Robot :Capabilities)}))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §3  ROBOT CONNECTION
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?handle (g2-open ?robot-url {}))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §4  TUPLE CONSTRUCTORS
+;;; ═══════════════════════════════════════════════════════════════
+
+(function make-percept {literal ?channel literal ?data variant ?address idiom ?content}
+  (var ?percept
+    [PERCEPT :Modality G2
+             :Channel  ?channel
+             :Address  ?address
+             :Data     ?data
+             :Content  ?content
+             :Moment   (moment)
+             :Token    ?token])
+  (tell ?perceiver-url ?percept)
+  ?percept)
+
+(function make-result {literal ?action literal ?status variant ?reason}
+  (var ?result
+    [RESULT :Action ?action
+            :Status ?status
+            :Reason ?reason
+            :Moment (moment)
+            :Token  ?token])
+  (tell ?perceiver-url ?result)
+  ?result)
+
+(function make-urge {literal ?need literal ?source real ?delta}
+  (var ?urge
+    [URGE :Need   ?need
+          :Source ?source
+          :Delta  ?delta
+          :Moment (moment)
+          :Token  ?token])
+  (tell ?perceiver-url ?urge)
+  ?urge)
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §5  POLLING BOOKKEEPING
+;;; ═══════════════════════════════════════════════════════════════
+
+(var ?poll-times {})
+(var ?monitor-last 0)
+
+(function due? {literal ?channel integer ?interval}
+  (var ?last (get ?poll-times ?channel))
+  (if (nil-p ?last) yes
+    else (>= (- (moment) ?last) ?interval)))
+
+(function mark-polled {literal ?channel}
+  (set ?poll-times (put ?poll-times ?channel (moment))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §6  HELPERS
+;;; ═══════════════════════════════════════════════════════════════
+
+(function infer-data-type {idiom ?raw}
+  (if (/= (:Width ?raw)          nil)  camera-frame
+   or (/= (:SampleRate ?raw)     nil)  audio-sample
+   or (/= (:Text ?raw)           nil)  transcription
+   or (/= (:Force ?raw)          nil)  force-reading
+   or (/= (:Joints ?raw)         nil)  joint-state
+   or (/= (:Orientation ?raw)    nil)  imu-reading
+   or (/= (:Voltage ?raw)        nil)  battery-state
+   or (/= (:Position ?raw)       nil)  odometry
+   or (/= (:Class ?raw)          nil)  object-detected
+   or (/= (:FaceId ?raw)         nil)  face-detected
+   or (/= (:EventType ?raw)      nil)  safety-event
+   else                                unknown))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §7  JOB (proactive): sensing + monitoring
+;;; ═══════════════════════════════════════════════════════════════
+
+(function g2-job {}
+
+  ;;; ── Sensing ──
+  ;;; Poll visual and proprioceptive fast, others slower.
+
+  ;;; Visual
+  (when (due? Visual \@m{0.3})
+    (var ?frame (ros2-camera-read ?handle "/camera/image_raw"))
+    (when (/= ?frame nil)
+      (make-percept Visual camera-frame (:Address ?frame) ?frame))
+    (mark-polled Visual))
+
+  ;;; Auditory
+  (when (due? Auditory \@m{0.5})
+    (var ?audio (ros2-audio-read ?handle "/audio/raw"))
+    (when (/= ?audio nil)
+      (make-percept Auditory (infer-data-type ?audio) nil ?audio))
+    (mark-polled Auditory))
+
+  ;;; Proprioceptive
+  (when (due? Proprioceptive \@m{0.2})
+    (var ?joints (ros2-joint-states ?handle))
+    (when (/= ?joints nil)
+      (make-percept Proprioceptive joint-state nil ?joints))
+    (var ?imu (ros2-imu-read ?handle nil))
+    (when (/= ?imu nil)
+      (make-percept Proprioceptive imu-reading nil ?imu))
+    (mark-polled Proprioceptive))
+
+  ;;; Spatial
+  (when (due? Spatial \@m{1})
+    (var ?odom (ros2-odom-read ?handle))
+    (when (/= ?odom nil)
+      (make-percept Spatial odometry nil ?odom))
+    (mark-polled Spatial))
+
+  ;;; System (slow)
+  (when (due? System \@m{15})
+    (var ?diag (ros2-diagnostics ?handle))
+    (when (/= ?diag nil)
+      (for ?d in ?diag
+        (make-percept System diagnostic nil ?d)))
+    (mark-polled System))
+
+
+  ;;; ── Monitoring ──
+  (when (>= (- (moment) ?monitor-last) \@m{10})
+
+    ;;; Battery
+    (try
+      (var ?batt (ros2-battery-read ?handle nil))
+      (when (and (/= ?batt nil) (< (:Percentage ?batt) 0.15))
+        (make-urge power Proprioceptive (- 1.0 (:Percentage ?batt))))
+    learn ?err nil)
+
+    ;;; Balance
+    (try
+      (var ?imu (ros2-imu-read ?handle nil))
+      (when (/= ?imu nil)
+        (var ?pitch (abs (:Pitch (:Orientation ?imu))))
+        (var ?roll  (abs (:Roll (:Orientation ?imu))))
+        (when (> (+ ?pitch ?roll) 0.3)
+          (make-urge balance Proprioceptive (+ ?pitch ?roll))))
+    learn ?err nil)
+
+    (set ?monitor-last (moment))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §8  HANDLER (reactive): actuation
+;;; ═══════════════════════════════════════════════════════════════
+
+(function g2-handler {url ?sender string ?message}
+  (when (= (@ ?message 1) ATTEMPT)
+    (var ?action (:Action ?message))
+    (var ?params (:Parameters ?message))
+    (try
+      (var ?raw (g2-dispatch ?handle ?action ?params))
+      (make-result ?action succeeded ?raw)
+    learn ?err
+      (make-result ?action failed (string ?err)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §9  THE AGENT
+;;; ═══════════════════════════════════════════════════════════════
+
+(agent G2 g2-job ?psyche-url g2-handler ?psyche-delay {sensing acting monitoring})
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; §10  STARTUP
+;;; ═══════════════════════════════════════════════════════════════
+
+(tell user ($ "G2 Psyche ready."))
