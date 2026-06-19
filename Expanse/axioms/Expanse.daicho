@@ -1,0 +1,137 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; Expanse.daicho — Expanse Psyche Configuration
+;;;
+;;; Settings only. No agent logic.
+;;;
+
+(settings Expanse {1 0 0}
+  memo "Expanse — the physical-world Psyche for GIL."
+
+
+  [Psyche
+    :Url        "locus://sol.earth.orb.local.host/mind/expanse"
+    :Port       2200
+    :Delay      \@m{0.2}
+    :Modality   Expanse
+  ]
+
+  [Figure
+    :Url            "ros2://figure-01"
+    :Adapter        figure
+    :AutoConnect    no
+    :Timeout        \@m{50}
+    :Channels       {Visual Auditory Haptic Proprioceptive Spatial Communication System}
+    :Capabilities   {walk turn stop step stand sit crouch navigate
+                     look track reach grasp release push pull lift place
+                     point wave nod shake-head speak emote
+                     joint-move pose-move trajectory set-stiffness
+                     capture-photo e-stop set-mode}
+  ]
+
+  [Optimus
+    :Url            "ros2://optimus-01"
+    :Adapter        optimus
+    :AutoConnect    no
+    :Timeout        \@m{50}
+    :Channels       {Visual Auditory Haptic Proprioceptive Spatial Communication System}
+    :Capabilities   {walk turn stop stand sit navigate
+                     look reach grasp release lift place
+                     speak emote
+                     joint-move trajectory
+                     capture-photo e-stop set-mode}
+  ]
+
+  [NAO
+    :Url            "ros2://nao-03"
+    :Adapter        nao
+    :AutoConnect    no
+    :Timeout        \@m{50}
+    :Channels       {Visual Auditory Haptic Proprioceptive Spatial Communication System}
+    :Capabilities   {walk turn stop stand sit crouch navigate
+                     look grasp release
+                     point wave nod shake-head speak emote display set-led
+                     joint-move pose-move set-stiffness
+                     capture-photo e-stop}
+  ]
+
+  [G2
+    :Url            "ros2://g2-01"
+    :Adapter        g2
+    :AutoConnect    no
+    :Timeout        \@m{50}
+    :Channels       {Visual Auditory Haptic Proprioceptive Spatial Communication System}
+    :Capabilities   {walk turn stop step stand sit navigate
+                     look reach grasp release lift place
+                     wave nod speak
+                     joint-move trajectory
+                     capture-photo e-stop set-mode}
+  ]
+
+  [Routing
+    :Visual           {figure optimus g2 nao}
+    :Auditory         {nao figure optimus g2}
+    :Haptic           {figure optimus g2 nao}
+    :Proprioceptive   {figure optimus g2 nao}
+    :Spatial          {figure optimus g2 nao}
+    :Olfactory        {}
+    :Communication    {nao figure optimus g2}
+    :System           {figure optimus g2 nao}
+  ]
+
+  [Polling
+    :Visual           \@m{0.3}
+    :Auditory         \@m{0.5}
+    :Haptic           \@m{1}
+    :Proprioceptive   \@m{0.2}
+    :Spatial          \@m{1}
+    :Olfactory        0
+    :Communication    \@m{0.5}
+    :System           \@m{15}
+  ]
+
+  [Urges
+    :ConnectionLost   {:Need connectivity  :Source System         :Threshold 1.0}
+    :LowBattery       {:Need power         :Source Proprioceptive :Threshold 0.15}
+    :Overheating      {:Need thermal       :Source Proprioceptive :Threshold 1.0}
+    :Imbalance        {:Need balance       :Source Proprioceptive :Threshold 1.0}
+    :Collision        {:Need safety        :Source Haptic         :Threshold 1.0}
+  ]
+
+
+  ;;; ════════════════════════════════════════════════════════════
+  ;;; §7  GENERIC ROS 2 ROBOTS
+  ;;;
+  ;;; Any ROS 2-compliant robot can be added here.
+  ;;; The Expanse connects to them via ros.package (standard topics).
+  ;;; Add the robot name to :Names, then add a section with its config.
+  ;;; ════════════════════════════════════════════════════════════
+
+  [GenericRobots
+    :Names          {}
+    ;;; Example:
+    ;;;   :Names {gazebo-sim spot}
+    ;;; Then add sections:
+    ;;;   [gazebo-sim
+    ;;;     :Url          "ros://localhost:9090"
+    ;;;     :AutoConnect  yes
+    ;;;     :Timeout      \@m{50}
+    ;;;     :Channels     {Visual Proprioceptive Spatial System}
+    ;;;     :Capabilities {walk turn stop navigate joint-move speak e-stop}
+    ;;;   ]
+  ]
+
+)

@@ -1,0 +1,231 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; expanse.suites — Test Suites for the Expanse Psyche
+;;;
+;;; § 1   Platform lifecycle
+;;; § 2   ROS 2 shared protocol
+;;; § 3   Per-platform adapters
+;;; § 4   Routing
+;;; § 5   Sensing
+;;; § 6   Acting (locomotion, manipulation, gaze, speech)
+;;; § 7   Percept formation
+;;; § 8   Urge generation
+;;; § 9   Convenience functions
+;;; § 10  Full lifecycle
+;;;
+
+
+(suites Expanse
+
+
+  ;; § 1  Platform Lifecycle
+
+    (suite Expanse.lifecycle
+    {
+      [lifecycle_00001  >  (require Expanse from "pkg/expanse/expanse.package")   .:  Expanse]
+      [lifecycle_00002  >  (var ?p (expanse-connect-platform nao "ros2://nao-03" {}))   .:  ?p]
+      [lifecycle_00003  >  (confirm (/= ?p nil) since "Should return a Platform thought.")]
+      [lifecycle_00004  >  (confirm (= (:Name ?p) nao) since ":Name should be nao.")]
+      [lifecycle_00005  >  (confirm (= (:Status ?p) connected) since ":Status should be connected.")]
+      [lifecycle_00006  >  (expanse-disconnect-platform nao)   .:  disconnected]
+    })
+
+
+  ;; § 2  ROS 2 Shared Protocol
+
+    (suite GenericROS2.protocol
+    {
+      [ros2_00001  >  (require GenericROS2 from "pkg/expanse/generic-ros2.package")   .:  GenericROS2]
+      [ros2_00002  >  (var ?h (ros2-open "ros2://nao-03" {}))   .:  ?h]
+      [ros2_00003  >  (var ?s (ros2-status ?h))   .:  ?s]
+      [ros2_00004  >  (confirm (= (:Adapter ?s) ros2) since "Should report ros2.")]
+      [ros2_00005  >  (var ?js (ros2-joint-states ?h))   .:  ?js]
+      [ros2_00006  >  (confirm (/= ?js nil) since "Should return joint states.")]
+      [ros2_00007  >  (ros2-close ?h)   .:  closed]
+    })
+
+
+  ;; § 3  Per-Platform Adapters
+
+    (suite Figure.protocol
+    {
+      [fig_00001  >  (require Figure from "pkg/expanse/figure.package")   .:  Figure]
+      [fig_00002  >  (var ?h (fig-open "ros2://figure-01" {}))   .:  ?h]
+      [fig_00003  >  (var ?s (fig-status ?h))   .:  ?s]
+      [fig_00004  >  (confirm (= (:Adapter ?s) figure) since "Should report figure.")]
+      [fig_00005  >  (fig-close ?h)   .:  closed]
+    })
+
+    (suite NAO.protocol
+    {
+      [nao_00001  >  (require NAO from "pkg/expanse/nao.package")   .:  NAO]
+      [nao_00002  >  (var ?h (nao-open "ros2://nao-03" {}))   .:  ?h]
+      [nao_00003  >  (var ?s (nao-status ?h))   .:  ?s]
+      [nao_00004  >  (confirm (= (:Adapter ?s) nao) since "Should report nao.")]
+      [nao_00005  >  (nao-close ?h)   .:  closed]
+    })
+
+
+  ;; § 4  Routing
+
+    (suite Expanse.routing
+    {
+      [route_00001  >  (require Expanse from "pkg/expanse/expanse.package")   .:  Expanse]
+      [route_00002  >  (expanse-connect-platform nao "ros2://nao-03" {})   .:  ?p]
+      [route_00003  >  (var ?r (expanse-route Auditory))   .:  ?r]
+      [route_00004  >  (confirm (= (:Name ?r) nao) since "Auditory should route to nao (first in priority).")]
+      [route_00005  >  (var ?r2 (expanse-route-action speak))   .:  ?r2]
+      [route_00006  >  (confirm (= (:Name ?r2) nao) since "speak should route to nao.")]
+      [route_00007  >  (expanse-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; § 5  Sensing
+
+    (suite Expanse.sensing
+    {
+      [sense_00001  >  (require Expanse from "pkg/expanse/expanse.package")   .:  Expanse]
+      [sense_00002  >  (expanse-connect-platform nao "ros2://nao-03" {})   .:  ?p]
+      [sense_00003  >  (var ?visual (expanse-sense Visual))   .:  ?visual]
+      [sense_00004  >  (var ?proprio (expanse-sense Proprioceptive))   .:  ?proprio]
+      [sense_00005  >  (confirm (/= ?proprio nil) since "Proprioceptive should return data.")]
+      [sense_00006  >  (expanse-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; § 6  Acting
+
+    (suite Expanse.locomotion
+    {
+      [loco_00001  >  (require Expanse from "pkg/expanse/expanse.package")   .:  Expanse]
+      [loco_00002  >  (expanse-connect-platform nao "ros2://nao-03" {})   .:  ?p]
+      [loco_00003  >  (var ?r (expanse-act walk {:LinearVelocity 0.3 :AngularVelocity 0.0}))   .:  ?r]
+      [loco_00004  >  (confirm (= (:Status ?r) moving) since "Should report moving.")]
+      [loco_00005  >  (expanse-stop)   .:  {:Status stopped}]
+      [loco_00006  >  (expanse-act stand {})   .:  ?s]
+      [loco_00007  >  (expanse-disconnect-all)   .:  disconnected]
+    })
+
+    (suite Expanse.manipulation
+    {
+      [manip_00001  >  (require Expanse from "pkg/expanse/expanse.package")   .:  Expanse]
+      [manip_00002  >  (expanse-connect-platform figure "ros2://figure-01" {})   .:  ?p]
+      [manip_00003  >  (var ?r (expanse-reach right {:X 0.5 :Y 0.0 :Z 0.8}))   .:  ?r]
+      [manip_00004  >  (var ?g (expanse-grasp right 5.0))   .:  ?g]
+      [manip_00005  >  (confirm (= (:Status ?g) grasping) since "Should report grasping.")]
+      [manip_00006  >  (var ?l (expanse-lift right 0.3))   .:  ?l]
+      [manip_00007  >  (expanse-release right)   .:  {:Status released :Hand right}]
+      [manip_00008  >  (expanse-disconnect-all)   .:  disconnected]
+    })
+
+    (suite Expanse.speech
+    {
+      [speech_00001  >  (require Expanse from "pkg/expanse/expanse.package")   .:  Expanse]
+      [speech_00002  >  (expanse-connect-platform nao "ros2://nao-03" {})   .:  ?p]
+      [speech_00003  >  (var ?r (expanse-speak "hello world"))   .:  ?r]
+      [speech_00004  >  (confirm (= (:Status ?r) spoken) since "Should report spoken.")]
+      [speech_00005  >  (expanse-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; § 7  Percept Formation
+
+    (suite Expanse.percept-formation
+
+      (test "make-percept produces well-formed PERCEPT tuple"
+        (require Expanse from "pkg/expanse/expanse.package")
+        (load "pkg/expanse/expanse-psyche.theory")
+        (var ?p (make-percept Visual camera-frame "ros2://nao-03/camera/top"
+                  {:Width 640 :Height 480 :Format rgb8 :FrameId "head_camera"}))
+        (confirm (= (:Modality ?p) Expanse) since ":Modality should be Expanse.")
+        (confirm (= (:Channel ?p) Visual) since ":Channel should be Visual.")
+        (confirm (= (:Data ?p) camera-frame) since ":Data should be camera-frame.")
+        (confirm (/= (:Content ?p) nil) since ":Content should carry the idiom.")
+        (confirm (= (:Width (:Content ?p)) 640) since "Width should be 640.")
+        (confirm (> (:Moment ?p) 0) since ":Moment should be set."))
+
+      (test "make-result produces well-formed RESULT tuple"
+        (load "pkg/expanse/expanse-psyche.theory")
+        (var ?r (make-result walk succeeded {:Status moving}))
+        (confirm (= (:Action ?r) walk) since ":Action should be walk.")
+        (confirm (= (:Status ?r) succeeded) since ":Status should be succeeded."))
+
+      (test "make-urge produces well-formed URGE tuple"
+        (load "pkg/expanse/expanse-psyche.theory")
+        (var ?u (make-urge power Proprioceptive 0.85))
+        (confirm (= (:Need ?u) power) since ":Need should be power.")
+        (confirm (= (:Source ?u) Proprioceptive) since ":Source should be Proprioceptive.")))
+
+
+  ;; § 8  Urge Generation
+
+    (suite Expanse.urge-generation
+
+      (test "Monitor detects disconnected platform"
+        (require Expanse from "pkg/expanse/expanse.package")
+        (load "pkg/expanse/expanse-psyche.theory")
+        (expanse-connect-platform nao "ros2://nao-03" {})
+        (expanse-disconnect-platform nao)
+        (with Platform {:Status disconnected :Name ?name}
+          (confirm (= ?name nao) since "Should find disconnected nao."))))
+
+
+  ;; § 9  Convenience Functions
+
+    (suite Expanse.convenience
+    {
+      [conv_00001  >  (require Expanse from "pkg/expanse/expanse.package")   .:  Expanse]
+      [conv_00002  >  (expanse-connect-platform nao "ros2://nao-03" {})   .:  ?p]
+      [conv_00003  >  (var ?r (expanse-walk 0.3 0.0))   .:  ?r]
+      [conv_00004  >  (confirm (= (:Status ?r) moving) since "Should report moving.")]
+      [conv_00005  >  (expanse-stop)   .:  {:Status stopped}]
+      [conv_00006  >  (var ?s (expanse-speak "convenience test"))   .:  ?s]
+      [conv_00007  >  (confirm (= (:Status ?s) spoken) since "Should report spoken.")]
+      [conv_00008  >  (expanse-disconnect-all)   .:  disconnected]
+    })
+
+
+  ;; § 10  Full Lifecycle
+
+    (suite Expanse.full-lifecycle
+    {
+      [full_00001  >  (require Expanse from "pkg/expanse/expanse.package")   .:  Expanse]
+      [full_00002  >  (expanse-connect-platform nao "ros2://nao-03" {})   .:  ?nao]
+      [full_00003  >  (confirm (= (:Status ?nao) connected) since "NAO should be connected.")]
+
+      ;;; Sense
+      [full_00004  >  (var ?proprio (expanse-sense Proprioceptive))   .:  ?proprio]
+      [full_00005  >  (confirm (/= ?proprio nil) since "Should sense proprioception.")]
+
+      ;;; Walk
+      [full_00006  >  (var ?w (expanse-walk 0.3 0.0))   .:  ?w]
+      [full_00007  >  (confirm (= (:Status ?w) moving) since "Should walk.")]
+      [full_00008  >  (expanse-stop)   .:  {:Status stopped}]
+
+      ;;; Speak
+      [full_00009  >  (var ?s (expanse-speak "full lifecycle test"))   .:  ?s]
+      [full_00010  >  (confirm (= (:Status ?s) spoken) since "Should speak.")]
+
+      ;;; Look
+      [full_00011  >  (var ?l (expanse-look {:X 1.0 :Y 0.0 :Z 1.2}))   .:  ?l]
+      [full_00012  >  (confirm (= (:Status ?l) looking) since "Should look.")]
+
+      ;;; Teardown
+      [full_00013  >  (expanse-disconnect-all)   .:  disconnected]
+    })
+
+
+) ;; end of Expanse suites

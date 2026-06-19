@@ -1,0 +1,188 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;; expanse.package — Expanse Unified Protocol Layer
+;;;
+;;; Requires the robot adapter packages and provides uniform functions
+;;; that route to the correct platform based on Expanse.daicho.
+;;;
+
+(package Expanse {1 0 0}
+
+  memo    "Expanse — unified protocol layer for the physical-world Psyche."
+  requires {ROS Figure Optimus NAO G2}
+
+
+  ;;; §1  PLATFORM REGISTRY
+
+  (relation Platform
+    :M
+    :Name          nil        ; figure | optimus | nao | g2 | <any ros2 robot name>
+    :Handle        nil        ; connection handle
+    :Status        nil        ; connected | disconnected
+    :Channels      nil        ; list of channel literals
+    :Capabilities  nil        ; list of action literals
+    :Adapter       nil        ; figure | optimus | nao | g2 | ros2 (generic)
+  )
+
+
+  ;;; §2  LIFECYCLE
+
+  (function expanse-connect-platform {literal ?name string ?url idiom ?options}
+    (var ?adapter (ros-default (:Adapter ?options) ?name))
+    (var ?handle
+      (case ?adapter
+        of figure   (fig-open ?url ?options)
+        of optimus  (opt-open ?url ?options)
+        of nao      (nao-open ?url ?options)
+        of g2       (g2-open ?url ?options)
+        else        (ros-open ?url ?options)))
+    (var ?channels     (setting Expanse ?name :Channels))
+    (var ?capabilities (setting Expanse ?name :Capabilities))
+    (new Platform :Name ?name :Handle ?handle :Status connected
+                  :Channels ?channels :Capabilities ?capabilities
+                  :Adapter ?adapter))
+
+  (function expanse-disconnect-platform {literal ?name}
+    (with Platform {:Name ?name :Handle ?handle :Adapter ?adapter}
+      (case ?adapter
+        of figure   (fig-close ?handle)
+        of optimus  (opt-close ?handle)
+        of nao      (nao-close ?handle)
+        of g2       (g2-close ?handle)
+        else        (ros-close ?handle))
+      (put Platform :Status disconnected))
+    disconnected)
+
+  (function expanse-connect-all {}
+    (var ?platforms {})
+    ;;; Connect named platform adapters
+    (for ?name in {figure optimus nao g2}
+      (var ?auto (setting Expanse ?name :AutoConnect))
+      (when (= ?auto yes)
+        (var ?url (setting Expanse ?name :Url))
+        (var ?opts {:Timeout (setting Expanse ?name :Timeout) :Adapter ?name})
+        (append ?platforms (expanse-connect-platform ?name ?url ?opts))))
+    ;;; Connect generic ROS 2 robots listed in [GenericRobots]
+    (var ?generics (setting Expanse GenericRobots :Names))
+    (when (/= ?generics nil)
+      (for ?name in ?generics
+        (var ?auto (setting Expanse ?name :AutoConnect))
+        (when (= ?auto yes)
+          (var ?url (setting Expanse ?name :Url))
+          (var ?opts {:Timeout (setting Expanse ?name :Timeout) :Adapter ros2})
+          (append ?platforms (expanse-connect-platform ?name ?url ?opts)))))
+    ?platforms)
+
+  (function expanse-disconnect-all {}
+    (for ?name in {figure optimus nao g2}
+      (with Platform {:Name ?name :Status connected}
+        (expanse-disconnect-platform ?name)))
+    disconnected)
+
+
+  ;;; §3  ROUTING
+
+  (function expanse-route {literal ?channel}
+    (var ?priority (setting Expanse Routing ?channel))
+    (var ?found nil)
+    (for ?name in ?priority
+      (when (nil-p ?found)
+        (with Platform {:Name ?name :Status connected :Handle ?h}
+          (set ?found {:Name ?name :Handle ?h}))))
+    (when (nil-p ?found)
+      (signal Failure :Text ($ "Expanse: no connected platform for channel" ?channel)))
+    ?found)
+
+  (function expanse-route-action {literal ?action}
+    (var ?found nil)
+    (with Platform {:Status connected :Capabilities ?caps :Handle ?h :Name ?name}
+      (when (and (nil-p ?found) (contains ?caps ?action))
+        (set ?found {:Name ?name :Handle ?h})))
+    (when (nil-p ?found)
+      (signal Failure :Text ($ "Expanse: no platform supports action" ?action)))
+    ?found)
+
+
+  ;;; §4  SENSING
+
+  (function expanse-sense {literal ?channel}
+    (var ?route (expanse-route ?channel))
+    (var ?handle (:Handle ?route))
+    (var ?name   (:Name ?route))
+    (case ?channel
+      of Visual         {(ros-camera-read ?handle "/camera/image_raw")
+                         (ros-depth-read ?handle "/camera/depth")}
+      of Auditory       {(ros-audio-read ?handle "/audio/raw")}
+      of Haptic         nil
+      of Proprioceptive {(ros-joint-states ?handle)
+                         (ros-imu-read ?handle nil)
+                         (ros-battery-read ?handle nil)}
+      of Spatial        {(ros-odom-read ?handle)}
+      of System         {(ros-diagnostics ?handle)}
+      else nil))
+
+
+  ;;; §5  ACTING
+
+  (function expanse-act {literal ?action idiom ?params}
+    (var ?route (expanse-route-action ?action))
+    (var ?handle (:Handle ?route))
+    (var ?name   (:Name ?route))
+    ;;; Look up the adapter type from the Platform record
+    (var ?adapter nil)
+    (with Platform {:Name ?name :Adapter ?a}
+      (set ?adapter ?a))
+    (case ?adapter
+      of figure   (fig-dispatch ?handle ?action ?params)
+      of optimus  (opt-dispatch ?handle ?action ?params)
+      of nao      (nao-dispatch ?handle ?action ?params)
+      of g2       (g2-dispatch ?handle ?action ?params)
+      else        (ros-dispatch ?handle ?action ?params)))
+
+
+  ;;; §6  CONVENIENCE FUNCTIONS
+
+  (function expanse-walk {real ?linear real ?angular}
+    (expanse-act walk {:LinearVelocity ?linear :AngularVelocity ?angular}))
+
+  (function expanse-stop {}
+    (expanse-act stop {}))
+
+  (function expanse-navigate {idiom ?goal}
+    (expanse-act navigate {:Goal ?goal}))
+
+  (function expanse-look {idiom ?target}
+    (expanse-act look {:Target ?target}))
+
+  (function expanse-grasp {literal ?hand real ?force}
+    (expanse-act grasp {:Hand ?hand :Force ?force}))
+
+  (function expanse-release {literal ?hand}
+    (expanse-act release {:Hand ?hand}))
+
+  (function expanse-speak {string ?text}
+    (expanse-act speak {:Text ?text}))
+
+  (function expanse-reach {literal ?arm idiom ?target}
+    (expanse-act reach {:Arm ?arm :Target ?target}))
+
+  (function expanse-lift {literal ?arm real ?height}
+    (expanse-act lift {:Arm ?arm :Height ?height}))
+
+  (function expanse-place {literal ?arm idiom ?target}
+    (expanse-act place {:Arm ?arm :Target ?target}))
+
+)
