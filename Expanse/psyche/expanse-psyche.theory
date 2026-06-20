@@ -28,12 +28,12 @@
 ;;;
 
 
-(require Expanse    from "pkg/expanse/expanse.package")
-(require GenericROS2 from "pkg/expanse/generic-ros2.package")
-(require Figure    from "pkg/expanse/figure.package")
-(require Optimus   from "pkg/expanse/optimus.package")
-(require NAO       from "pkg/expanse/nao.package")
-(require G2        from "pkg/expanse/g2.package")
+(require Expanse    from "./pkg/expanse/expanse.package")
+(require ROS from "./pkg/ros/ros.package")
+(require Figure    from "./pkg/figure/figure.package")
+(require Optimus   from "./pkg/optimus/optimus.package")
+(require NAO       from "./pkg/nao/nao.package")
+(require G2        from "./pkg/g2/g2.package")
 
 
 ;;; ═══════════════════════════════════════════════════════════════
@@ -188,7 +188,7 @@
     ;;; Battery
     (try
       (var ?route (expanse-route Proprioceptive))
-      (var ?batt (ros2-battery-read (:Handle ?route) nil))
+      (var ?batt (ros-battery-read (:Handle ?route) nil))
       (when (/= ?batt nil)
         (var ?pct (:Percentage ?batt))
         (var ?cfg (setting Expanse Urges :LowBattery))
@@ -199,7 +199,7 @@
     ;;; Motor temperature
     (try
       (var ?route (expanse-route Proprioceptive))
-      (var ?diag (ros2-diagnostics (:Handle ?route)))
+      (var ?diag (ros-diagnostics (:Handle ?route)))
       (when (/= ?diag nil)
         (for ?d in ?diag
           (when (= (:Level ?d) warning)

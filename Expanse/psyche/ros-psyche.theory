@@ -38,7 +38,7 @@
 ;;;
 
 
-(require ROS from "pkg/expanse/ros.package")
+(require ROS from "./pkg/ros/ros.package")
 
 
 ;;; ═══════════════════════════════════════════════════════════════

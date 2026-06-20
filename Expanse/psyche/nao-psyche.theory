@@ -20,15 +20,15 @@
 ;;; Capabilities: 4-mic array, head touch, bumpers, chest tablet, NAOqi behaviors.
 ;;;
 ;;; Use this psyche when the Learner inhabits a single NAO body.
-;;; Use expanse-psyche.theory when the Learner needs to switch between
+;;; Use ./expanse/psyche/expanse-psyche.theory when the Learner needs to switch between
 ;;; or coordinate multiple robot platforms.
 ;;;
 ;;; All percepts carry :Modality NAO.
 ;;;
 
 
-(require GenericROS2 from "pkg/expanse/generic-ros2.package")
-(require NAO      from "pkg/expanse/nao.package")
+(require ROS from "./pkg/ros/ros.package")
+(require NAO      from "./pkg/nao/nao.package")
 
 
 ;;; ═══════════════════════════════════════════════════════════════
@@ -146,38 +146,38 @@
 
   ;;; Visual
   (when (due? Visual \@m{0.3})
-    (var ?frame (ros2-camera-read ?handle "/camera/image_raw"))
+    (var ?frame (ros-camera-read ?handle "/camera/image_raw"))
     (when (/= ?frame nil)
       (make-percept Visual camera-frame (:Address ?frame) ?frame))
     (mark-polled Visual))
 
   ;;; Auditory
   (when (due? Auditory \@m{0.5})
-    (var ?audio (ros2-audio-read ?handle "/audio/raw"))
+    (var ?audio (ros-audio-read ?handle "/audio/raw"))
     (when (/= ?audio nil)
       (make-percept Auditory (infer-data-type ?audio) nil ?audio))
     (mark-polled Auditory))
 
   ;;; Proprioceptive
   (when (due? Proprioceptive \@m{0.2})
-    (var ?joints (ros2-joint-states ?handle))
+    (var ?joints (ros-joint-states ?handle))
     (when (/= ?joints nil)
       (make-percept Proprioceptive joint-state nil ?joints))
-    (var ?imu (ros2-imu-read ?handle nil))
+    (var ?imu (ros-imu-read ?handle nil))
     (when (/= ?imu nil)
       (make-percept Proprioceptive imu-reading nil ?imu))
     (mark-polled Proprioceptive))
 
   ;;; Spatial
   (when (due? Spatial \@m{1})
-    (var ?odom (ros2-odom-read ?handle))
+    (var ?odom (ros-odom-read ?handle))
     (when (/= ?odom nil)
       (make-percept Spatial odometry nil ?odom))
     (mark-polled Spatial))
 
   ;;; System (slow)
   (when (due? System \@m{15})
-    (var ?diag (ros2-diagnostics ?handle))
+    (var ?diag (ros-diagnostics ?handle))
     (when (/= ?diag nil)
       (for ?d in ?diag
         (make-percept System diagnostic nil ?d)))
@@ -189,14 +189,14 @@
 
     ;;; Battery
     (try
-      (var ?batt (ros2-battery-read ?handle nil))
+      (var ?batt (ros-battery-read ?handle nil))
       (when (and (/= ?batt nil) (< (:Percentage ?batt) 0.15))
         (make-urge power Proprioceptive (- 1.0 (:Percentage ?batt))))
     learn ?err nil)
 
     ;;; Balance
     (try
-      (var ?imu (ros2-imu-read ?handle nil))
+      (var ?imu (ros-imu-read ?handle nil))
       (when (/= ?imu nil)
         (var ?pitch (abs (:Pitch (:Orientation ?imu))))
         (var ?roll  (abs (:Roll (:Orientation ?imu))))
