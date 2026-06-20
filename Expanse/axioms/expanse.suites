@@ -46,15 +46,15 @@
 
   ;; § 2  ROS 2 Shared Protocol
 
-    (suite GenericROS2.protocol
+    (suite ROS.protocol
     {
-      [ros2_00001  >  (require GenericROS2 from "pkg/expanse/generic-ros2.package")   .:  GenericROS2]
-      [ros2_00002  >  (var ?h (ros2-open "ros2://nao-03" {}))   .:  ?h]
-      [ros2_00003  >  (var ?s (ros2-status ?h))   .:  ?s]
+      [ros2_00001  >  (require ROS from "pkg/expanse/ros.package")   .:  ROS]
+      [ros2_00002  >  (var ?h (ros-open "ros2://nao-03" {}))   .:  ?h]
+      [ros2_00003  >  (var ?s (ros-status ?h))   .:  ?s]
       [ros2_00004  >  (confirm (= (:Adapter ?s) ros2) since "Should report ros2.")]
-      [ros2_00005  >  (var ?js (ros2-joint-states ?h))   .:  ?js]
+      [ros2_00005  >  (var ?js (ros-joint-states ?h))   .:  ?js]
       [ros2_00006  >  (confirm (/= ?js nil) since "Should return joint states.")]
-      [ros2_00007  >  (ros2-close ?h)   .:  closed]
+      [ros2_00007  >  (ros-close ?h)   .:  closed]
     })
 
 
@@ -147,7 +147,7 @@
 
       (test "make-percept produces well-formed PERCEPT tuple"
         (require Expanse from "pkg/expanse/expanse.package")
-        (load "pkg/expanse/expanse-psyche.theory")
+        (load "./expanse/psyche/expanse-psyche.theory")
         (var ?p (make-percept Visual camera-frame "ros2://nao-03/camera/top"
                   {:Width 640 :Height 480 :Format rgb8 :FrameId "head_camera"}))
         (confirm (= (:Modality ?p) Expanse) since ":Modality should be Expanse.")
@@ -158,13 +158,13 @@
         (confirm (> (:Moment ?p) 0) since ":Moment should be set."))
 
       (test "make-result produces well-formed RESULT tuple"
-        (load "pkg/expanse/expanse-psyche.theory")
+        (load "./expanse/psyche/expanse-psyche.theory")
         (var ?r (make-result walk succeeded {:Status moving}))
         (confirm (= (:Action ?r) walk) since ":Action should be walk.")
         (confirm (= (:Status ?r) succeeded) since ":Status should be succeeded."))
 
       (test "make-urge produces well-formed URGE tuple"
-        (load "pkg/expanse/expanse-psyche.theory")
+        (load "./expanse/psyche/expanse-psyche.theory")
         (var ?u (make-urge power Proprioceptive 0.85))
         (confirm (= (:Need ?u) power) since ":Need should be power.")
         (confirm (= (:Source ?u) Proprioceptive) since ":Source should be Proprioceptive.")))
@@ -176,7 +176,7 @@
 
       (test "Monitor detects disconnected platform"
         (require Expanse from "pkg/expanse/expanse.package")
-        (load "pkg/expanse/expanse-psyche.theory")
+        (load "./expanse/psyche/expanse-psyche.theory")
         (expanse-connect-platform nao "ros2://nao-03" {})
         (expanse-disconnect-platform nao)
         (with Platform {:Status disconnected :Name ?name}

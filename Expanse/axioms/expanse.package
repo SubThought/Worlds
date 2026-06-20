@@ -20,9 +20,12 @@
 ;;;
 
 (package Expanse {1 0 0}
-
-  memo    "Expanse — unified protocol layer for the physical-world Psyche."
-  requires {ROS Figure Optimus NAO G2}
+  "Expanse — unified protocol layer for the physical-world Psyche."
+  (require ROS from "./pkg/ros/ros.package")
+  (require Figure from "./pkg/figure/figure.package")
+  (require Optimus from "./pkg/optimus/optimus.package")
+  (require NAO from "./pkg/nao/nao.package")
+  (require G2 from "./pkg/g2/g2.package")
 
 
   ;;; §1  PLATFORM REGISTRY
@@ -186,3 +189,5 @@
     (expanse-act place {:Arm ?arm :Target ?target}))
 
 )
+
+;;; -------- end of file -------
