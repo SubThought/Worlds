@@ -1,0 +1,193 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;;  draw.theory   --  the drawing half: palette, maze, entities, HUD.
+;;;
+;;;  Design after raylib-pacman (b12n-oss) and pacman.clj by Michiel Borkent
+;;;  (MIT License). Original Premise implementation: code, maze layout, and
+;;;  shim written fresh for this port; no source text copied. Binds raylib by
+;;;  Ramon Santamaria (zlib license) at runtime. Pac-Man is a trademark of
+;;;  Bandai Namco; no original assets are used. Credits: doc/pacman-readme.md.
+;;;
+;;; Reads the Game, calls
+;;; raylib, changes nothing. Grokked inside (theory Pacman ...).
+;;;
+;;; Pixels: a tile is ?Scale pixels square; tile column c starts at
+;;; pixel (c - 1) * ?Scale, and likewise rows, so continuous positions
+;;; convert with the same formula.
+
+(let ?Scale (setting Pacman Window :Scale))
+
+;;; ------------------------------------------------------------------
+;;; Colors. Raylib's Color is four bytes {r g b a} by value; packed
+;;; little-endian into one int32 it is r + 256g + 65536b + 16777216a.
+;;; Alpha 255 pushes the value past the signed midpoint, so fold it to
+;;; the equivalent two's-complement negative: the bits are identical.
+
+(function pack-color {?r ?g ?b + ?a := 255}
+  (let ?v (+ ?r (* 256 ?g) (* 65536 ?b) (* 16777216 ?a)))
+  (if (>= ?v 2147483648)
+      (- ?v 4294967296)
+   else
+      ?v))
+
+(let ?ColBg      (pack-color 12 12 16))
+(let ?ColWall    (pack-color 33 33 200))
+(let ?ColDoor    (pack-color 230 170 190))
+(let ?ColDot     (pack-color 255 200 170))
+(let ?ColPac     (pack-color 250 219 20))
+(let ?ColBlinky  (pack-color 235 40 20))
+(let ?ColPinky   (pack-color 250 160 210))
+(let ?ColInky    (pack-color 60 220 230))
+(let ?ColClyde   (pack-color 245 160 50))
+(let ?ColFright  (pack-color 40 60 220))
+(let ?ColWhite   (pack-color 240 240 240))
+(let ?ColDark    (pack-color 20 20 40))
+
+;;; ------------------------------------------------------------------
+;;; Helpers.
+
+(function px {?u}
+  "Tile units to a pixel edge, as an integer."
+  (fix (* (- ?u 1) ?Scale)))
+
+(function pxc {?u}
+  "Tile units to pixels, kept real, for centres fed to rlVertex2f."
+  (* (- ?u 1) ?Scale))
+
+(function ghost-color {?g}
+  (if (> (get ?g :Fright) 0)
+      ?ColFright
+   else
+      (case (get ?g :Name)
+        of Blinky ?ColBlinky
+        of Pinky  ?ColPinky
+        of Inky   ?ColInky
+        else      ?ColClyde)))
+
+;;; ------------------------------------------------------------------
+;;; The maze.
+
+(function draw-maze {?game}
+  (let ?grid (get ?game :Grid))
+  (step ?r from 1 to ?Rows
+    (step ?c from 1 to ?Cols
+      (let ?cell (get ?grid ?r ?c))
+      (let ?x (px ?c))
+      (let ?y (px ?r))
+      (let ?mx (fix (+ ?x (/ ?Scale 2))))
+      (let ?my (fix (+ ?y (/ ?Scale 2))))
+      (if (= ?cell wall)
+          (raylib.DrawRectangle (+ ?x 1) (+ ?y 1)
+                                (- ?Scale 2) (- ?Scale 2) ?ColWall)
+       or (= ?cell dot)
+          (raylib.DrawCircle ?mx ?my (* 0.1 ?Scale) ?ColDot)
+       or (= ?cell pellet)
+          (raylib.DrawCircle ?mx ?my (* 0.27 ?Scale) ?ColDot)
+       or (= ?cell door)
+          (raylib.DrawRectangle ?x (fix (+ ?y (* 0.4 ?Scale)))
+                                ?Scale (fix (* 0.2 ?Scale)) ?ColDoor)))))
+
+;;; ------------------------------------------------------------------
+;;; Pacman: a disc with a wedge bitten out, emitted as an rlgl triangle
+;;; fan. The heading is one of four right angles -- raylib's screen
+;;; angles run clockwise, so down is 90. The mouth opens and closes
+;;; with the animation phase; the fan sweeps from the far lip of the
+;;; mouth all the way round to the near one.
+
+(function draw-pac {?pac}
+  (let ?cx (pxc (get ?pac :X)))
+  (let ?cy (pxc (get ?pac :Y)))
+  (let ?radius (* 0.45 ?Scale))
+  (let ?heading (case {(get ?pac :FX) (get ?pac :FY)}
+                  of {1 0}  0
+                  of {0 1}  90
+                  of {-1 0} 180
+                  else      270))
+  (let ?s (sine (get ?pac :Mouth)))
+  (let ?mouth (* 40 (max ?s (- 0 ?s))))
+  (let ?a  (+ ?heading ?mouth))
+  (let ?a1 (+ ?heading (- 360 ?mouth)))
+  (raylib.rlColor4ub 250 219 20 255)
+  (raylib.rlBegin 4)                          ; RL_TRIANGLES
+  (while (< ?a ?a1)
+    (let ?b (min (+ ?a 15) ?a1))
+    (raylib.rlVertex2f ?cx ?cy)
+    (raylib.rlVertex2f (+ ?cx (* ?radius (cosine ?b cir degrees)))
+                       (+ ?cy (* ?radius (sine   ?b cir degrees))))
+    (raylib.rlVertex2f (+ ?cx (* ?radius (cosine ?a cir degrees)))
+                       (+ ?cy (* ?radius (sine   ?a cir degrees))))
+    (set ?a ?b))
+  (raylib.rlEnd))
+
+;;; ------------------------------------------------------------------
+;;; A ghost: a dome, a square skirt, two eyes that look where it goes.
+
+(function draw-ghost {?g}
+  (let ?cx (pxc (get ?g :X)))
+  (let ?cy (pxc (get ?g :Y)))
+  (let ?color (ghost-color ?g))
+  (raylib.DrawCircle (fix ?cx) (fix (- ?cy (* 0.05 ?Scale)))
+                     (* 0.42 ?Scale) ?color)
+  (raylib.DrawRectangle (fix (- ?cx (* 0.42 ?Scale)))
+                        (fix (- ?cy (* 0.05 ?Scale)))
+                        (fix (* 0.84 ?Scale))
+                        (fix (* 0.47 ?Scale))
+                        ?color)
+  (let ?ex (* 0.15 ?Scale))
+  (let ?ey (* 0.12 ?Scale))
+  (let ?lx (* 0.06 (get ?g :DX) ?Scale))
+  (let ?ly (* 0.06 (get ?g :DY) ?Scale))
+  (raylib.DrawCircle (fix (- ?cx ?ex)) (fix (- ?cy ?ey))
+                     (* 0.11 ?Scale) ?ColWhite)
+  (raylib.DrawCircle (fix (+ ?cx ?ex)) (fix (- ?cy ?ey))
+                     (* 0.11 ?Scale) ?ColWhite)
+  (raylib.DrawCircle (fix (+ (- ?cx ?ex) ?lx)) (fix (+ (- ?cy ?ey) ?ly))
+                     (* 0.05 ?Scale) ?ColDark)
+  (raylib.DrawCircle (fix (+ (+ ?cx ?ex) ?lx)) (fix (+ (- ?cy ?ey) ?ly))
+                     (* 0.05 ?Scale) ?ColDark))
+
+;;; ------------------------------------------------------------------
+;;; HUD: score and level under the maze, spare lives as small discs,
+;;; and the centred message when there is one.
+
+(function draw-hud {?game}
+  (let ?top (+ (* ?Rows ?Scale) (fix (* 0.4 ?Scale))))
+  (let ?size (fix (* 0.8 ?Scale)))
+  (raylib.DrawText ($$ "SCORE " (get ?game :Score))
+                   ?Scale ?top ?size ?ColWhite)
+  (raylib.DrawText ($$ "LEVEL " (get ?game :Level))
+                   (* 13 ?Scale) ?top ?size ?ColWhite)
+  (step ?i from 1 to (- (get ?game :Lives) 1)
+    (raylib.DrawCircle (fix (* (+ 7.5 ?i) ?Scale))
+                       (fix (+ ?top (* 0.4 ?Scale)))
+                       (* 0.3 ?Scale) ?ColPac))
+  (if (not (nil-p (get ?game :Message)))
+      (raylib.DrawText (get ?game :Message)
+                       (fix (* 4.2 ?Scale))
+                       (fix (* 11.2 ?Scale))
+                       (fix (* 0.7 ?Scale))
+                       ?ColWhite)))
+
+;;; ------------------------------------------------------------------
+
+(function draw-state {?game}
+  "One frame. Reads everything, changes nothing."
+  (raylib.ClearBackground ?ColBg)
+  (draw-maze ?game)
+  (for ?g in (get ?game :Ghosts)
+    (draw-ghost ?g))
+  (draw-pac (get ?game :Pac))
+  (draw-hud ?game))

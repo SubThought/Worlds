@@ -1,0 +1,79 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;;  main.theory   --  the loop: input, step, draw, unattended runs.
+;;;
+;;;  Design after raylib-pacman (b12n-oss) and pacman.clj by Michiel Borkent
+;;;  (MIT License). Original Premise implementation: code, maze layout, and
+;;;  shim written fresh for this port; no source text copied. Binds raylib by
+;;;  Ramon Santamaria (zlib license) at runtime. Pac-Man is a trademark of
+;;;  Bandai Namco; no original assets are used. Credits: doc/pacman-readme.md.
+;;;
+;;; Polls keys onto the Pac
+;;; ephemeron, steps the game, draws, and honors the unattended-run
+;;; arguments. Grokked inside (theory Pacman ...).
+
+(function poll-input {?game}
+  "Arrows or WASD. A press only buffers the turn (:NDX :NDY); the
+   axioms apply it at the next legal tile centre."
+  (let ?pac (get ?game :Pac))
+  (if (or (= yes (raylib.IsKeyDown 262)) (= yes (raylib.IsKeyDown 68)))
+      (put ?pac :NDX 1)
+      (put ?pac :NDY 0))
+  (if (or (= yes (raylib.IsKeyDown 263)) (= yes (raylib.IsKeyDown 65)))
+      (put ?pac :NDX -1)
+      (put ?pac :NDY 0))
+  (if (or (= yes (raylib.IsKeyDown 265)) (= yes (raylib.IsKeyDown 87)))
+      (put ?pac :NDX 0)
+      (put ?pac :NDY -1))
+  (if (or (= yes (raylib.IsKeyDown 264)) (= yes (raylib.IsKeyDown 83)))
+      (put ?pac :NDX 0)
+      (put ?pac :NDY 1)))
+
+(function run {+ ?deadline ?shotPath ?shotFrame}
+  "Runs the game and returns the final score.
+   (run)                    plays until the window closes.
+   (run 10)                 quits after ten seconds of game time.
+   (run 3 \"out.png\" 76)   quits after three, captures frame 76.
+   Omitted arguments fall back to the [Run] section of the daicho, so
+   an unattended run can also be configured without touching code."
+  (if (nil-p ?deadline)  (set ?deadline  (setting Pacman Run :Deadline)))
+  (if (nil-p ?shotPath)  (set ?shotPath  (setting Pacman Run :ShotPath)))
+  (if (nil-p ?shotFrame) (set ?shotFrame (setting Pacman Run :ShotFrame)))
+  (let ?dtMax (setting Pacman Game :DtMax))
+  (raylib.InitWindow (* ?Cols ?Scale)
+                     (* (+ ?Rows 2) ?Scale)
+                     (setting Pacman Window :Title))
+  (raylib.SetTargetFPS (setting Pacman Window :Fps))
+  (let ?game (new-game))
+  (while (= no (raylib.WindowShouldClose))
+    ;; the clamp: below 20 fps the game slows instead of tunnelling
+    (let ?dt (min ?dtMax (raylib.GetFrameTime)))
+    (poll-input ?game)
+    (if (= no (get ?game :Over))
+        (step ?game ?dt)
+     else
+        (if (= yes (raylib.IsKeyPressed 257))          ; ENTER
+            (set ?game (new-game))))
+    (==> ?game + :Frame 1)
+    (raylib.BeginDrawing)
+    (draw-state ?game)
+    (raylib.EndDrawing)
+    (if (and (/= "" ?shotPath) (= ?shotFrame (get ?game :Frame)))
+        (raylib.TakeScreenshot ?shotPath))
+    (if (and (> ?deadline 0) (>= (get ?game :Clock) ?deadline))
+        (break)))
+  (raylib.CloseWindow)
+  (get ?game :Score))
