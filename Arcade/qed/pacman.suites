@@ -1,0 +1,69 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;;  pacman.suites   --  test suites over the pure axioms.
+;;;
+;;;  Design after raylib-pacman (b12n-oss) and pacman.clj by Michiel Borkent
+;;;  (MIT License). Original Premise implementation: code, maze layout, and
+;;;  shim written fresh for this port; no source text copied. Binds raylib by
+;;;  Ramon Santamaria (zlib license) at runtime. Pac-Man is a trademark of
+;;;  Bandai Namco; no original assets are used. Credits: doc/pacman-readme.md.
+;;;
+;;; Load the
+;;; game first (grok "pacman.theory"), then:
+;;;
+;;;   (grok "qed/pacman.suites")
+;;;   (certify Pacman)          ; .: QED, or a list of issues
+;;;
+;;; Nothing here opens a window; everything tested is arithmetic over
+;;; the maze and the score table.
+
+(suites Pacman
+
+  (suite Pacman.tiles
+    [Pacman_tiles_00001 > (Pacman.tile-col 7)    .: 7]
+    [Pacman_tiles_00002 > (Pacman.tile-col 0)    .: 19]    ; tunnel, left
+    [Pacman_tiles_00003 > (Pacman.tile-col 20)   .: 1]     ; tunnel, right
+    [Pacman_tiles_00004 > (Pacman.tile-col -18)  .: 1]
+    [Pacman_tiles_00005 > (Pacman.cell-of "#")   .: wall]
+    [Pacman_tiles_00006 > (Pacman.cell-of ".")   .: dot]
+    [Pacman_tiles_00007 > (Pacman.cell-of "o")   .: pellet]
+    [Pacman_tiles_00008 > (Pacman.cell-of "-")   .: door]
+    [Pacman_tiles_00009 > (Pacman.cell-of "G")   .: house]
+    [Pacman_tiles_00010 > (Pacman.cell-of "P")   .: empty] )
+
+  (suite Pacman.grid
+    [Pacman_grid_00001 > (Pacman.grid-at (Pacman.make-grid) 0 5)
+                       .: wall]                            ; above the maze
+    [Pacman_grid_00002 > (Pacman.grid-at (Pacman.make-grid) 22 5)
+                       .: wall]                            ; below the maze
+    [Pacman_grid_00003 > (Pacman.grid-at (Pacman.make-grid) 1 1)
+                       .: wall]                            ; the border
+    [Pacman_grid_00004 > (Pacman.grid-at (Pacman.make-grid) 10 20)
+                       .: (Pacman.grid-at (Pacman.make-grid) 10 1)]
+                                                           ; the tunnel wraps
+    [Pacman_grid_00005 > (Pacman.wall-p (Pacman.make-grid) 8 10)
+                       .: yes]                             ; the door blocks Pacman
+    [Pacman_grid_00006 > (Pacman.ghost-wall-p (Pacman.make-grid) 8 10)
+                       .: no]                              ; but never a ghost
+    [Pacman_grid_00007 > (Pacman.count-dots (Pacman.make-grid))
+                       .: 198] )                           ; machine-verified
+
+  (suite Pacman.score
+    [Pacman_score_00001 > (* 200 (** 2 0)) .: 200]         ; the combo ladder
+    [Pacman_score_00002 > (* 200 (** 2 1)) .: 400]
+    [Pacman_score_00003 > (* 200 (** 2 2)) .: 800]
+    [Pacman_score_00004 > (* 200 (** 2 3)) .: 1600] )
+)

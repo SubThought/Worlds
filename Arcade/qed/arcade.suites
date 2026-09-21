@@ -1,0 +1,269 @@
+;;; **********************************************************************************************
+;;;
+;;;   Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;   IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;   ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;   DEALINGS IN THE SOFTWARE.
+;;;
+;;;  **********************************************************************************************
+
+;;; ══════════════════════════════════════════════════════════════════
+;;;
+;;;   arcade.suites — the Arcade psyche, tested without a window.
+;;;
+;;;   RUN FROM 1.0/pacman/, as the psyche itself is:
+;;;
+;;;     premise --home "…/1.0/pacman/"
+;;;     (grok "../gil/src/psyche/arcade.psyche")
+;;;     (grok "../gil/qed/arcade.suites")
+;;;     (certify Arcade)                    ; .: QED, or a list of issues
+;;;
+;;;   GROKKING THE PSYCHE OPENS NOTHING.  As with Eidos, the psyche
+;;;   starts only when arcade-start is called — which is why these
+;;;   suites can load it at all.
+;;;
+;;;   THE FORM IS THE MANUAL'S.  A test is a tuple:
+;;;
+;;;       [id  > expression  .: expected]
+;;;
+;;;   `>` and `.:` are DELIMITERS, not calls.
+;;;
+;;;   TESTS SHARE ONE SCOPE, SEQUENTIALLY.  certify gives each suite a
+;;;   fresh child scope and runs its tests in order, so a test may
+;;;   build what the next one reads.  ORDER MATTERS; do not reorder.
+;;;
+;;;   WHAT IS NOT HERE, AND WHY.  Drawing, capturing, the realtime tick
+;;;   and the turns advance all call raylib, which needs a window.  They
+;;;   want a scripted smoke run with [Play :Mode turns] — deterministic
+;;;   enough to check frame by frame.  Everything below is the psyche's
+;;;   logic, and none of it touches the graphics.
+;;;
+;;;   AND NO HANDSHAKE AGAINST THE REAL REGISTRAR.  Eidos has one,
+;;;   because its suites load inside the mind.  These load in the
+;;;   pacman process, where there is no Registrar to shake hands with;
+;;;   the grant and the refusal are tested by feeding the psyche the
+;;;   tuples a Registrar would send.
+;;;
+;;; ══════════════════════════════════════════════════════════════════
+
+(suites Arcade {1 0 0}
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 1  THE REPERTOIRE
+  ;;;
+  ;;; What is offered at registration.  RESTART belongs to the Arcade
+  ;;; and WAIT is offered in both modes — so these hold whichever
+  ;;; [Play :Mode] is configured.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Repertoire
+
+    [arc_00001  > (# (arcade-repertoire))                  .: 6]
+    [arc_00002  > (contains (arcade-repertoire) restart)   .: yes]
+    [arc_00003  > (contains (arcade-repertoire) wait)      .: yes]
+    [arc_00004  > (contains (arcade-repertoire) up)        .: yes]
+    [arc_00005  > (contains (arcade-repertoire) right)     .: yes]
+
+    ;;; the title's moves never include restart — the psyche adds it
+    [arc_00006  > (contains (arcade-moves) restart)        .: no]
+    [arc_00007  > (# (arcade-moves))                       .: 5])
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 2  WHAT MAY BE DONE NOW
+  ;;;
+  ;;; Everything while playing; only restart once the game is over;
+  ;;; and restart in every answer.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Able
+
+    ;;; a fresh game is being played
+    [arc_00101  > (do (arcade-new-game) (# (arcade-able)))  .: 6]
+    [arc_00102  > (contains (arcade-able) restart)          .: yes]
+    [arc_00103  > (contains (arcade-able) up)               .: yes]
+
+    ;;; the game ends: the moves are withdrawn
+    [arc_00104  > (do (put (arcade-game) :Over yes) (# (arcade-able)))  .: 1]
+    [arc_00105  > (contains (arcade-able) up)               .: no]
+    [arc_00106  > (contains (arcade-able) wait)             .: no]
+
+    ;;; RESTART SURVIVES THE ENDING — the one thing no state removes
+    [arc_00107  > (contains (arcade-able) restart)          .: yes])
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 3  STEERING
+  ;;;
+  ;;; A direction is a BUFFERED TURN — the same two slots a keypress
+  ;;; writes — and wait writes nothing.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Steer
+
+    [arc_00201  > (do (arcade-new-game) (arcade-steer up)
+                      (get (get (arcade-game) :Pac) :NDY))   .: -1]
+    [arc_00202  > (get (get (arcade-game) :Pac) :NDX)        .: 0]
+
+    [arc_00203  > (do (arcade-steer left)
+                      (get (get (arcade-game) :Pac) :NDX))   .: -1]
+    [arc_00204  > (get (get (arcade-game) :Pac) :NDY)        .: 0]
+
+    [arc_00205  > (do (arcade-steer down)
+                      (get (get (arcade-game) :Pac) :NDY))   .: 1]
+
+    [arc_00206  > (do (arcade-steer right)
+                      (get (get (arcade-game) :Pac) :NDX))   .: 1]
+
+    ;;; wait leaves the buffered turn exactly as it was
+    [arc_00207  > (do (arcade-steer wait)
+                      (get (get (arcade-game) :Pac) :NDX))   .: 1]
+    [arc_00208  > (get (get (arcade-game) :Pac) :NDY)        .: 0])
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 4  A NEW GAME'S SETPOINTS
+  ;;;
+  ;;; What the needs are measured from.  198 is the dot count the
+  ;;; pacman suites pin — checked here against the same maze, so the
+  ;;; psyche and the game cannot drift apart about what a full board is.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Setpoints
+
+    [arc_00301  > (do (arcade-new-game) (:StartDots (arcade-session)))  .: 198]
+    [arc_00302  > (:StartLives (arcade-session))
+                  .: (setting Pacman Game :Lives)]
+
+    ;;; a new game clears the announcement of the last one's ending
+    [arc_00303  > (:WasOver (arcade-session))                  .: no])
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 5  REGISTRATION
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Registration
+
+    [arc_00401  > (:Psyche (arcade-register-tuple))            .: Arcade]
+    [arc_00402  > (:Type (arcade-register-tuple))              .: Visual]
+    [arc_00403  > (# (:Needs (arcade-register-tuple)))         .: 3]
+    [arc_00404  > (contains (:Needs (arcade-register-tuple)) hunger)   .: yes]
+    [arc_00405  > (contains (:Needs (arcade-register-tuple)) finish)   .: yes]
+    [arc_00406  > (contains (:Needs (arcade-register-tuple)) survive)  .: yes]
+    [arc_00407  > (contains (:Actuations (arcade-register-tuple)) restart)  .: yes]
+    [arc_00408  > (:W (:Raster (arcade-register-tuple)))       .: 1024]
+    [arc_00409  > (:H (:Raster (arcade-register-tuple)))       .: 1024]
+
+    ;;; the grant supplies the token and the addresses
+    [arc_00410
+      > (do (arcade-granted
+              [PSYCHE :Status Granted :Token "granted-0001"
+                      :Access [URLS :Perceiver "tcp://p" :Executor "tcp://e"]])
+            (arcade-token))
+      .: "granted-0001"]
+    [arc_00411  > (arcade-perceiver-url)                       .: "tcp://p"]
+    [arc_00412  > (arcade-registered-p)                        .: yes]
+
+    ;;; THE GRANT DOES NOT CAPTURE — it asks the loop to.  The first
+    ;;; look is queued, not taken, because the handler never touches
+    ;;; the window.
+    [arc_00413  > (:FirstLook (arcade-session))                .: yes]
+
+    ;;; A REFUSAL IS ABSORBED, NOT IGNORED
+    [arc_00414
+      > (do (arcade-granted [PSYCHE :Status Refused :Reason "no :Psyche slot"])
+            (arcade-registered-p))
+      .: no])
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 6  THE BOUNDARY
+  ;;;
+  ;;; THE PSYCHE'S WHOLE DOCTRINE, MADE CHECKABLE.  A percept carries
+  ;;; an address and what may be done — and NONE of the game's
+  ;;; numbers.  The day somebody adds :Score to a percept for
+  ;;; debugging, this is what fails.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Boundary
+
+    [arc_00501  > (do (arcade-new-game)
+                      (var ?p (arcade-percept "frame://arcade/test"))
+                      (:Modality ?p))                          .: Arcade]
+    [arc_00502  > (:Address ?p)                                .: "frame://arcade/test"]
+    [arc_00503  > (contains (:Able ?p) restart)                .: yes]
+
+    ;;; what must never cross
+    [arc_00504  > (nil-p (:Score    (:Content ?p)))            .: yes]
+    [arc_00505  > (nil-p (:Lives    (:Content ?p)))            .: yes]
+    [arc_00506  > (nil-p (:DotsLeft (:Content ?p)))            .: yes]
+    [arc_00507  > (nil-p (:Grid     (:Content ?p)))            .: yes]
+
+    ;;; the ending in the mind's words, not the game's
+    [arc_00508  > (:State (:Content (arcade-event "frame://arcade/test" ended)))
+                  .: ended])
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 7  FRAMES
+  ;;;
+  ;;; frame://arcade/<guid>, stored as arcade_percept_<guid>.png — the
+  ;;; convention frames.py sets for every psyche.  Guids, so no two
+  ;;; frames ever share an address, even across restarts.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Frames
+
+    [arc_00601  > (arcade-frame-address "abc")                 .: "frame://arcade/abc"]
+    [arc_00602  > (arcade-frame-file "abc")
+                  .: ($$ (setting Arcade Raster :Hot) "arcade_percept_abc.png")]
+
+    ;;; two guids are never the same — the ring buffer's failure,
+    ;;; ruled out by construction
+    [arc_00603  > (= (arcade-guid) (arcade-guid))              .: no])
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 8  THE RASTER'S FIT
+  ;;;
+  ;;; The board with its HUD is 19 x 23 tiles; at 1024 pixels the
+  ;;; largest scale that fits is 44.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Scale
+
+    [arc_00701  > (arcade-fit-scale)                           .: 44])
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 9  REFUSAL
+  ;;;
+  ;;; An action not on offer is refused WITH A REASON, before anything
+  ;;; touches the world or the window — which is why this can be tested
+  ;;; here at all.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (suite Arcade.Refusal
+
+    ;;; steering a finished game
+    [arc_00801  > (do (arcade-new-game) (put (arcade-game) :Over yes)
+                      (:Status (arcade-attempt [ATTEMPT :Act up :Trial 7])))
+                  .: Fail]
+    [arc_00802  > (:Trial (arcade-attempt [ATTEMPT :Act up :Trial 7]))  .: 7]
+    [arc_00803  > (/= "" (:Reason (arcade-attempt [ATTEMPT :Act up :Trial 7])))
+                  .: yes]
+
+    ;;; an action no Arcade title has
+    [arc_00804  > (:Status (arcade-attempt [ATTEMPT :Act jump :Trial 8]))  .: Fail])
+
+)
+
+;; ---------------  end of file -----------------
