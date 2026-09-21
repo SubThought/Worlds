@@ -1,0 +1,847 @@
+;;; **********************************************************************************************
+;;;
+;;;   Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;   IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;   ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;   DEALINGS IN THE SOFTWARE.
+;;;
+;;;  **********************************************************************************************
+
+;;; ══════════════════════════════════════════════════════════════════
+;;;
+;;;   arcade.psyche {1 0 0} — a game as world
+;;;
+;;;   The first Arcade title is Pacman: the Premise port in 1.0/pacman/.
+;;;
+;;;   THE BOUNDARY.  Five jobs and nothing more, as Eidos has:
+;;;
+;;;     1  register  — announce the world and its six actuations
+;;;     2  perceive  — rasterise the board to 1024 x 1024, address it,
+;;;                    emit PERCEPT
+;;;     3  urge      — hunger, finish, and survive
+;;;     4  actuate   — take ATTEMPT, step the world, emit RESULT
+;;;     5  capability — say, on every percept, what may be done now
+;;;
+;;;   IT NEVER CALLS A MIND MECHANISM.  A psyche that reaches into the
+;;;   mind is not a boundary; it is a hole in one.
+;;;
+;;;   WHAT CROSSES:
+;;;
+;;;     out   PERCEPT · URGE · RESULT · REGISTER
+;;;     in    ATTEMPT · PSYCHE · TERMINATE
+;;;
+;;;   WHAT NEVER CROSSES:
+;;;
+;;;     the maze strings, the Game structure, tile coordinates, ghost
+;;;     names, the score, the lives count, the dot count, or the words
+;;;     READY and GAME OVER.  The mind gets pixels, a sense of what it
+;;;     may do, and three needs.  Anything else would be telling it what
+;;;     this world is made of before it has looked.
+;;;
+;;; ── WHY THE PSYCHE HOSTS THE GAME ─────────────────────────────────
+;;;
+;;;   Eidos relays to a Python listener because ARC lives behind an
+;;;   API.  Pacman lives in Premise, and its game half is pure: new-game
+;;;   and step touch no raylib, and draw-state reads and changes
+;;;   nothing.  So the world runs in this process and there is no
+;;;   second transport to fail.
+;;;
+;;; ── TWO WAYS FOR THE WORLD TO RUN: [Play :Mode] ───────────────────
+;;;
+;;;   realtime  (the default)  The game runs at its own pace whether
+;;;             or not the mind acts, exactly as it does for a human.
+;;;             An ATTEMPT buffers a turn and returns at once; a
+;;;             percept goes out every :PerceiveEvery frames.  The
+;;;             ghosts do not wait for the mind to think, and neither
+;;;             does anything else — which is the honest test of a
+;;;             mind meant for a world that does not pause.
+;;;
+;;;   turns     The world advances ONLY ON AN ATTEMPT: :FramesPerAction
+;;;             frames at a fixed :Dt, then one percept.  Turn-based,
+;;;             like ARC, and deterministic — the same actions from the
+;;;             same state give the same frames, which is what lets a
+;;;             transition be confirmed rather than observed once.
+;;;             Between attempts the window is REDRAWN but NOT STEPPED.
+;;;
+;;;   WHY REALTIME IS THE DEFAULT.  A world that waits measures what
+;;;   the mind understands; a world that does not also measures whether
+;;;   it can understand in time.  Pacman was built to be the second
+;;;   kind, and the mind should meet it as it is.  Turns is the
+;;;   laboratory setting — for debugging, for confirming a transition,
+;;;   for a mind still too slow to keep up.
+;;;
+;;;   IN BOTH MODES THE WINDOW IS PUMPED EVERY TICK.  raylib reads its
+;;;   event queue in EndDrawing, and a window nobody draws to for forty
+;;;   seconds is one the operating system declares hung.
+;;;
+;;; ── ONE THREAD FOR RAYLIB ─────────────────────────────────────────
+;;;
+;;;   OpenGL binds its context to the thread that created the window,
+;;;   so EVERY raylib call — draw, capture, poll — happens in the one
+;;;   loop in arcade-start, on the thread that called InitWindow.
+;;;
+;;;   The agent's handler therefore does no raylib work at all.  It
+;;;   QUEUES: an ATTEMPT goes on :Pending, a grant sets :FirstLook, a
+;;;   TERMINATE sets :Closing, and the loop acts on them on its next
+;;;   pass.  An earlier draft drew from the agent's job and captured
+;;;   from its handler; if the evaluator runs agents on their own
+;;;   threads, that is undefined behaviour in the graphics driver, and
+;;;   the symptom is a black frame or a crash that never reproduces.
+;;;
+;;;   IT ALSO MAKES THE BOUNDARY TESTABLE.  The grant and the refusal
+;;;   no longer touch the window, so a suite can exercise them.
+;;;
+;;; ── HOW IT IS STARTED ─────────────────────────────────────────────
+;;;
+;;;   As Eidos is: grokking this file starts nothing.  arcade-start is
+;;;   called, and holds the process for as long as the window is open.
+;;;
+;;;     premise --home "…/1.0/pacman/" \
+;;;             --grok "../gil/src/psyche/arcade.psyche" \
+;;;             --eval "(arcade-start)" --repl no
+;;;
+;;;   Which is what lets arcade.suites load it without opening a
+;;;   window or registering with a live mind.
+;;;
+;;; ── THE BEAT IS OURS ──────────────────────────────────────────────
+;;;
+;;;   One beat per percept: per attempt in turns, per capture in
+;;;   realtime.  A moment records when the mind thought; a beat records
+;;;   where the world is in its sequence.
+;;;
+;;; ══════════════════════════════════════════════════════════════════
+
+(theory Arcade {1 0 0}
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; THE PROCESS HOME IS 1.0/pacman/
+  ;;;
+  ;;; pacman.theory groks its parts by relative path, so this process
+  ;;; is started with --home at the pacman folder and everything below
+  ;;; resolves against it — including the path back to GIL's own tree
+  ;;; for this psyche's configuration.
+  ;;;
+  ;;;   premise --home "…/1.0/pacman/" \
+  ;;;           --grok "../gil/src/psyche/arcade.psyche" \
+  ;;;           --eval "(arcade-start)" --repl no
+  ;;;
+  ;;; SETTINGS FIRST, then the game.  pacman.theory groks its own daicho
+  ;;; and requires raylib, so the library path is set before any
+  ;;; external resolves.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (grok "../gil/cfg/Arcade.daicho")
+  (grok "pacman.theory")
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 0  STATE
+  ;;;
+  ;;; In a relation, not in top-level vars: a top-level (var …) in a
+  ;;; grokked file is invisible to the functions defined in it, which
+  ;;; is what killed every published psyche's session state.
+  ;;;
+  ;;; THE GAME IS AN EPHEMERON HELD HERE, not a thought.  Pacman's own
+  ;;; comment says it: frame-loop state, never queried, never
+  ;;; persisted.  This row owns the handle so every function reaches
+  ;;; the same world.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (relation ArcadeSession
+    :Game       nil     ; the Pacman Game ephemeron
+    :Token      nil     ; granted at registration
+    :Perceiver  nil     ; where percepts go, from the grant
+    :Executor   nil     ; where the mind actuates from, from the grant
+    :Registered no
+    :Beat       0       ; the world's position — one per attempt
+    :WasOver    no      ; so the ending is announced once, not every frame
+    :StartLives 3       ; for the survive delta
+    :StartDots  0       ; for the hunger and finish scales
+    :SinceShot  0       ; realtime: frames since the last percept
+    :Pending    {}      ; ATTEMPTs queued by the handler for the loop
+    :FirstLook  no      ; the grant arrived; the loop sends the first frame
+    :Closing    no      ; TERMINATE arrived; the loop closes the window
+    :Task       nil     ; the listening agent's task, for cancel
+    :Run        ""      ; this run's name, for the archive
+    :Sequence   0       ; archive frame counter, per run
+    :Moment     0
+  )
+
+
+  (function arcade-session {}
+    "The session row, minted on first use."
+    (var ?row (with [ArcadeSession ^ as ?r] give ?r))
+    (if (nil-p ?row)
+        (do (new ArcadeSession :Beat 0 :Registered no :Moment (moment))
+            (return (with [ArcadeSession ^ as ?r] give ?r)))
+     else
+        (return ?row)))
+
+
+  (function arcade-game  {} (return (:Game (arcade-session))))
+  (function arcade-token {} (return (:Token (arcade-session))))
+  (function arcade-beat  {} (return (beat (:Beat (arcade-session)))))
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 1  THE REPERTOIRE
+  ;;;
+  ;;; THE ACTUATIONS, all offered at registration:
+  ;;;
+  ;;;   up down left right   buffer a turn, exactly as a keypress does
+  ;;;   wait                 let the world run with no new input
+  ;;;   restart              begin a fresh game — EVERY TITLE, ALWAYS
+  ;;;
+  ;;; RESTART BELONGS TO THE ARCADE, NOT TO PACMAN.  Every title this
+  ;;; psyche hosts offers it, in every state, playing or finished.  A
+  ;;; mind that could only begin again after losing could never learn
+  ;;; that abandoning a hopeless position is itself a choice — and a
+  ;;; title that did not offer it would be a world the mind could get
+  ;;; stuck in.
+  ;;;
+  ;;; A DIRECTION IS A BUFFERED TURN, NOT A MOVE.  It sets the Pac's
+  ;;; :NDX :NDY — the same two slots poll-input writes — and the game
+  ;;; applies it at the next tile centre where it is legal.  So `up` in
+  ;;; mid-corridor is not refused and not wasted; it waits for the
+  ;;; junction.  That is the game's own rule and the mind should learn
+  ;;; it rather than have it smoothed away.
+  ;;;
+  ;;; WAIT IS OFFERED IN BOTH MODES.
+  ;;;
+  ;;; In turns it is how time passes without steering: nothing happens
+  ;;; unless the mind acts, so doing nothing has to be something it can
+  ;;; choose.
+  ;;;
+  ;;; In realtime the world runs anyway, but `wait` is still worth
+  ;;; having as an ACT.  Choosing to hold a course is a decision, and a
+  ;;; mind whose only record of restraint is the absence of an attempt
+  ;;; cannot learn anything from it — there is no Attempt to correlate
+  ;;; a Result with, no transition to mint.  `wait` makes restraint
+  ;;; something the mind did, and so something it can learn the
+  ;;; consequences of.
+  ;;;
+  ;;; AND ONE REPERTOIRE ACROSS BOTH MODES means what the mind learns
+  ;;; about its actions in one carries to the other.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-turns-p {}
+    (return (= (setting Arcade Play :Mode) turns)))
+
+
+  (function arcade-moves {}
+    "The title's own actions — Pacman's steering, and wait."
+    (return {up down left right wait}))
+
+
+  (function arcade-repertoire {}
+    "Everything the psyche offers: the title's moves, and restart."
+    (return (union (arcade-moves) {restart})))
+
+
+  (function arcade-able {}
+    "What may be done this frame — :Able on the percept.
+
+     RESTART IS IN EVERY ANSWER.  It is added unconditionally, after
+     everything else is decided, so no state of any title can take it
+     away.
+
+     THE MOVES ARE WITHDRAWN WHEN THE GAME IS OVER.  Steering a
+     finished game changes nothing, and offering it would teach the
+     mind that its actions had stopped mattering for no reason it
+     could see."
+    (var ?g (arcade-game))
+    (var ?over (and (not (nil-p ?g)) (= yes (get ?g :Over))))
+    (return (union (if ?over {} else (arcade-moves)) {restart})))
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 2  REGISTRATION
+  ;;;
+  ;;; AN ANNOUNCEMENT, NOT A HANDSHAKE.  The psyche does not block on
+  ;;; the grant — but it does not send its first percept until the
+  ;;; grant arrives, because a percept carrying no token is one the
+  ;;; Perceiver rightly drops, and the mind's first sight of a world
+  ;;; should not be the one it throws away.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-register-tuple {}
+    "The REGISTER tuple, built but not sent — so it can be inspected
+     by a suite or the portal before it goes."
+    (return
+      [REGISTER
+        :Psyche      Arcade
+        :Type        Visual
+        :Address     (setting Arcade Psyche :Url)
+        :Channels    {(setting Arcade World :Channel)}
+        :Needs       {hunger finish survive}
+        :Mode        (setting Arcade Play :Mode)
+        :Actuations  (arcade-repertoire)
+        :Raster      (idiom :W (setting Arcade Raster :Width)
+                            :H (setting Arcade Raster :Height))
+        :Moment      (moment)
+        :Token       (arcade-token)]))
+
+
+  (function arcade-register {}
+    (tell (setting Arcade Mind :Registrar) ($ (arcade-register-tuple)))
+    (trace "[Arcade] registration sent")
+    registered)
+
+
+  (function arcade-granted {?grant}
+    "Absorb [PSYCHE :Status Granted :Token t :Access [URLS …]].
+
+     THE GRANT SUPPLIES THE ADDRESSES; the daicho's are the fallback.
+
+     A REFUSAL IS ABSORBED TOO.  A device that believes it is
+     registered when it is not sends percepts that are silently
+     dropped — the hardest failure in the system to see."
+    (var ?s (arcade-session))
+    (if (/= (:Status ?grant) Granted)
+        (do (put ?s :Registered no :Moment (moment))
+            (trace ($ "[Arcade] registration refused: " (:Reason ?grant)))
+            (return no))
+     else
+        (do
+          (var ?access (:Access ?grant))
+          (put ?s
+            :Token      (:Token ?grant)
+            :Perceiver  (default (:Perceiver ?access)
+                                 (setting Arcade Mind :Perceiver))
+            :Executor   (default (:Executor ?access)
+                                 (setting Arcade Mind :Executor))
+            :Registered yes
+            :FirstLook  yes
+            :Moment     (moment))
+          ;;; THE FIRST SIGHT OF THE WORLD, NOW THAT IT WILL BE KEPT —
+          ;;; but not taken here.  This runs on the handler, and the
+          ;;; handler never touches the window; the loop sees
+          ;;; :FirstLook and captures on its own thread.
+          (return yes))))
+
+
+  (function arcade-registered-p {}
+    "Has a grant been absorbed?  Not `do we hold a token` — a refusal
+     clears the registration, and never having asked is a different
+     state from having been turned down."
+    (return (default (:Registered (arcade-session)) no)))
+
+
+  (function arcade-perceiver-url {}
+    (return (default (:Perceiver (arcade-session))
+                     (setting Arcade Mind :Perceiver))))
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 3  THE RASTER
+  ;;;
+  ;;; 1024 x 1024, and the board drawn by the game's own draw-state —
+  ;;; so the mind sees exactly what a human player sees, HUD included.
+  ;;; The score and the lives are pixels, not facts; if the mind comes
+  ;;; to read them, it will have learned to.
+  ;;;
+  ;;; THE SCALE COMES FROM pacman.daicho, because draw.theory reads
+  ;;; [Window :Scale] once, at grok, into ?Scale.  The board with its
+  ;;; two HUD rows is Cols x (Rows + 2) tiles — 19 x 23 — so the
+  ;;; largest scale that fits 1024 is 44, filling 836 x 1012.  Anything
+  ;;; smaller still works and simply leaves more of the raster empty;
+  ;;; anything larger would crop the board, and is refused.
+  ;;;
+  ;;; ── THE TRAP ────────────────────────────────────────────────
+  ;;;
+  ;;; raylib 5's TakeScreenshot DISCARDS THE DIRECTORY of the path it
+  ;;; is given and writes to the working directory.  So the frame is
+  ;;; captured under a bare name and then MOVED where it belongs.
+  ;;; Passing a full path looks as if it works, and puts every frame in
+  ;;; the wrong place.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-fit-scale {}
+    "The largest tile scale at which the whole board fits the raster."
+    (var ?w (setting Arcade Raster :Width))
+    (var ?h (setting Arcade Raster :Height))
+    (return (min (fix (/ ?w ?Pacman.Cols))
+                 (fix (/ ?h (+ ?Pacman.Rows 2))))))
+
+
+  (function arcade-check-scale {}
+    "Refuse a scale that would crop the board; note one that wastes it."
+    (var ?have (setting Pacman Window :Scale))
+    (var ?fit  (arcade-fit-scale))
+    (if (> ?have ?fit)
+        (do (trace ($ "[Arcade] [Window :Scale " ?have "] crops the board at "
+                      (setting Arcade Raster :Width) " pixels; set it to "
+                      ?fit " or less in cfg/pacman.daicho."))
+            (return no))
+     or (< ?have ?fit)
+        (do (trace ($ "[Arcade] [Window :Scale " ?have "] leaves the board small; "
+                      ?fit " fills the raster."))
+            (return yes))
+     else (return yes)))
+
+
+  ;;; ── FRAMES THE WAY EIDOS DOES THEM ──────────────────────────
+  ;;;
+  ;;; frames.py sets the convention, and the reasons with it:
+  ;;;
+  ;;;   ADDRESSES ARE GUIDS, AND IMMUTABLE.  frame://arcade/<guid>.  A
+  ;;;   ring buffer was considered and REJECTED: slot reuse opens a
+  ;;;   window in which a detector holding an address reads a
+  ;;;   DIFFERENT frame — silently, and only under load.
+  ;;;
+  ;;;   ONE HOT DIRECTORY FOR EVERY PSYCHE.  GIL's etc/frames/in/, and
+  ;;;   the file is <psyche>_percept_<guid>.png — the prefix carries
+  ;;;   the device and the kind, the guid the identity.  The portal
+  ;;;   resolves any frame:// address against it.
+  ;;;
+  ;;;   COLLECTED ON DISUSE, BY CONSOLIDATION.  Never by perception.  A
+  ;;;   frame the mind made something of survives; one it never used
+  ;;;   is collected.  THIS PSYCHE DELETES NOTHING.
+  ;;;
+  ;;;   THE ARCHIVE IS APPEND-ONLY AND NEVER COLLECTED.  Perception
+  ;;;   wants a small hot working set; evidence wants a permanent log.
+  ;;;
+  ;;; An earlier draft named frames by beat and pruned the oldest past
+  ;;; a :Keep count.  That was the rejected ring buffer, reinvented —
+  ;;; and beat-named files collide the first time the process restarts.
+  ;;;
+  ;;; ONE DIFFERENCE FROM EIDOS, AND WHY.  Eidos archives into a folder
+  ;;; per run.  Premise has no call to make a directory, so the run's
+  ;;; name goes in the FILE name instead: arcade_<run>_<sequence>.png,
+  ;;; in one archive folder that must exist.  Still ordered, still
+  ;;; append-only, still readable back without an index.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-guid {}
+    "A fresh identity.  A UUIDv7 — opaque, and it means nothing."
+    (return (string (uuid))))
+
+
+  (function arcade-frame-address {string ?guid}
+    "The address the mind is given."
+    (return ($$ "frame://arcade/" ?guid)))
+
+
+  (function arcade-frame-file {string ?guid}
+    "The hot file the same frame is stored under.
+
+     BOTH FROM THE GUID, never one from the other.  Recovering the
+     guid by cutting the scheme off an address is string surgery that
+     silently goes wrong the day the scheme changes."
+    (return ($$ (setting Arcade Raster :Hot) "arcade_percept_" ?guid ".png")))
+
+
+  (function arcade-archive-file {}
+    "The next archive file for this run, in order."
+    (var ?s (arcade-session))
+    (==> ?s + :Sequence 1)
+    (return ($$ (setting Arcade Raster :Archive)
+                "arcade_" (:Run ?s) "_" (:Sequence ?s) ".png")))
+
+
+  (function arcade-draw {}
+    "One frame to the window.  Reads the game; changes nothing."
+    (raylib.BeginDrawing)
+    (Pacman.draw-state (arcade-game))
+    (raylib.EndDrawing))
+
+
+  (function arcade-snapshot {}
+    "Capture what is on the window NOW — no redraw — into the hot
+     directory and the archive, and return the frame:// address.
+
+     TWICE, BECAUSE THERE IS NO FILE COPY.  Premise's `copy` copies a
+     sequence, not a file, so the framebuffer is captured once under
+     each bare name and each file is moved to its home.  Nothing is
+     drawn between the two, so they are the same picture.
+
+     SEPARATE FROM DRAWING because realtime has just drawn the frame it
+     wants, and drawing it again would be a frame the player never
+     saw."
+    (var ?guid (arcade-guid))
+    (raylib.TakeScreenshot "arcade-hot.png")     ; BARE names — see the trap
+    (raylib.TakeScreenshot "arcade-arc.png")
+    (move "arcade-hot.png" (arcade-frame-file ?guid))
+    (move "arcade-arc.png" (arcade-archive-file))
+    (return (arcade-frame-address ?guid)))
+
+
+  (function arcade-capture {}
+    "Draw, then snapshot."
+    (arcade-draw)
+    (return (arcade-snapshot)))
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 4  PERCEPTION
+  ;;;
+  ;;; :Address IS THE CURRENCY.  What crosses is the address of a
+  ;;; rasterised PNG, never the Game.  The mind has detectors, not a
+  ;;; parser.
+  ;;;
+  ;;; :Able ON THE TUPLE, not in :Content: it is a property of the
+  ;;; occasion rather than a description of the frame.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-percept {string ?address}
+    (return
+      [PERCEPT
+        :Modality Arcade
+        :Channel  (setting Arcade World :Channel)
+        :Source   (setting Arcade Psyche :Url)
+        :Address  ?address
+        :Able     (arcade-able)
+        :Content  (idiom :Data frame
+                         :W (setting Arcade Raster :Width)
+                         :H (setting Arcade Raster :Height))
+        :Beat     (arcade-beat)
+        :Moment   (moment)
+        :Token    (arcade-token)]))
+
+
+  (function arcade-event {string ?address literal ?state}
+    "A game-event percept — the game ended, or began again.
+
+     IN THE MIND'S VOCABULARY, NEVER THE GAME'S.  `ended` and `began`,
+     not GAME OVER and READY: those are words on the screen, and the
+     mind may read them there if it learns to."
+    (return
+      [PERCEPT
+        :Modality Arcade
+        :Channel  (setting Arcade World :Channel)
+        :Source   (setting Arcade Psyche :Url)
+        :Address  ?address
+        :Able     (arcade-able)
+        :Content  (idiom :Data game-event :State ?state)
+        :Beat     (arcade-beat)
+        :Moment   (moment)
+        :Token    (arcade-token)]))
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 5  URGES
+  ;;;
+  ;;; THREE NEEDS, AND THEY DO NOT ALL RUN THE SAME WAY.
+  ;;;
+  ;;;   hunger    delta = dots still on the board, target the full
+  ;;;             board.  HOMEOSTATIC: a setpoint of zero, and a
+  ;;;             FALLING delta is the reward.  Every dot eaten is a
+  ;;;             small satisfaction.
+  ;;;
+  ;;;   finish    delta = dots eaten, target the full board.  A GOAL
+  ;;;             GRADIENT: the delta RISES as hunger falls, so the urge
+  ;;;             to finish strengthens as the end comes into reach.
+  ;;;             It discharges when the board is cleared — the next
+  ;;;             level starts it again from zero.
+  ;;;
+  ;;;   survive   delta = lives lost this game, target the lives the
+  ;;;             game began with.  A RISING delta is distress.
+  ;;;
+  ;;; HUNGER AND FINISH ARE THE SAME QUANTITY SEEN FROM OPPOSITE ENDS,
+  ;;; and that is the point of having both.  Hunger rewards each dot;
+  ;;; finish rewards nearness to the whole.  A mind driven only by
+  ;;; hunger eats whatever is nearest and leaves stragglers in far
+  ;;; corners, because the last few dots are worth no more than the
+  ;;; first.  Finish is what makes the last few worth crossing the maze
+  ;;; for — the pull that grows as the task nears done, which is Hull's
+  ;;; goal gradient and a real feature of motivated behaviour.
+  ;;;
+  ;;; > READ THE DIRECTION BEFORE READING THE NUMBER.  Hunger's reward
+  ;;; > is a falling delta; finish's intensity is a rising one.  A
+  ;;; > mechanism that assumed every falling delta was satisfaction
+  ;;; > would read finish exactly backwards.
+  ;;;
+  ;;; THE SCORE DOES NOT CROSS.  Eating a ghost raises it and changes
+  ;;; no need — it is pixels in the HUD, and whether the mind comes to
+  ;;; value it is something it would have to learn.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-urge {literal ?need ?delta ?target}
+    (tell (arcade-perceiver-url)
+      ($ [URGE :Need   ?need
+               :Delta  ?delta
+               :Target ?target
+               :Beat   (arcade-beat)
+               :Moment (moment)
+               :Token  (arcade-token)]))
+    ?need)
+
+
+  (function arcade-urges {}
+    (var ?s    (arcade-session))
+    (var ?g    (arcade-game))
+    (var ?all  (:StartDots ?s))
+    (var ?left (get ?g :DotsLeft))
+    (arcade-urge hunger  ?left              ?all)
+    (arcade-urge finish  (- ?all ?left)     ?all)
+    (arcade-urge survive (- (:StartLives ?s) (get ?g :Lives))
+                         (:StartLives ?s))
+    nil)
+
+
+  (function arcade-perceive {+ ?drawn := no}
+    "Capture this frame and send it, the urges, and any event.
+
+     THE ENDING IS ANNOUNCED ONCE.  :WasOver remembers that it has
+     been said, so a mind that keeps looking at a finished game gets
+     one event and then ordinary frames — not a fresh ending every
+     time it glances."
+    (var ?s (arcade-session))
+    (var ?g (arcade-game))
+    ;;; NOTHING GOES OUT BEFORE THE GRANT.  A percept with no token is
+    ;;; one the Perceiver rightly drops; realtime would otherwise be
+    ;;; sending ten a second into the void while registration was in
+    ;;; flight.
+    (when (= no (:Registered ?s)) (return nil))
+    (var ?address (if (= ?drawn yes) (arcade-snapshot) else (arcade-capture)))
+    (tell (arcade-perceiver-url) ($ (arcade-percept ?address)))
+    (when (and (= yes (get ?g :Over)) (= no (:WasOver ?s)))
+      (tell (arcade-perceiver-url) ($ (arcade-event ?address ended)))
+      (put ?s :WasOver yes))
+    (arcade-urges)
+    ?address)
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 6  THE WORLD
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-new-game {}
+    "A fresh game, and the setpoints its needs are measured from."
+    (var ?s (arcade-session))
+    (var ?g (Pacman.new-game))
+    (put ?s :Game       ?g
+            :WasOver    no
+            :StartLives (get ?g :Lives)
+            :StartDots  (get ?g :DotsLeft)
+            :Moment     (moment))
+    ?g)
+
+
+  (function arcade-steer {literal ?act}
+    "Buffer a turn on the Pac — the same two slots poll-input writes."
+    (var ?pac (get (arcade-game) :Pac))
+    (case ?act
+      of up     (do (put ?pac :NDX  0) (put ?pac :NDY -1))
+      of down   (do (put ?pac :NDX  0) (put ?pac :NDY  1))
+      of left   (do (put ?pac :NDX -1) (put ?pac :NDY  0))
+      of right  (do (put ?pac :NDX  1) (put ?pac :NDY  0))
+      else      nil)
+    ?act)
+
+
+  (function arcade-advance {}
+    "Run the world forward by one action's worth of frames.
+
+     EACH SUB-FRAME IS DRAWN, only the last is captured.  Drawing
+     keeps the window live and lets an observer watch the move; one
+     capture keeps the mind to one percept per action.
+
+     STOPS EARLY IF THE GAME ENDS.  Stepping a finished game does
+     nothing, and drawing it eleven more times is waste."
+    (var ?g  (arcade-game))
+    (var ?dt (setting Arcade Play :Dt))
+    (step ?i from 1 to (setting Arcade Play :FramesPerAction)
+      (when (= yes (get ?g :Over)) (break))
+      (Pacman.step ?g ?dt)
+      (==> ?g + :Frame 1)
+      (arcade-draw))
+    ?g)
+
+
+  (function arcade-tick {}
+    "REALTIME: one frame of the world at its own pace.
+
+     THE GAME'S OWN CLAMP.  dt is the real frame time, capped at
+     [Game :DtMax] exactly as the game's loop caps it — so a stall is a
+     hiccup and nothing tunnels through a wall.
+
+     A PERCEPT EVERY :PerceiveEvery FRAMES, not every frame.  At sixty
+     a second, a 1024 x 1024 capture per frame would spend the machine
+     on writing PNGs, and no mind looks that often."
+    (var ?s  (arcade-session))
+    (var ?g  (arcade-game))
+    (var ?dt (min (setting Pacman Game :DtMax) (raylib.GetFrameTime)))
+    (when (= no (get ?g :Over))
+      (Pacman.step ?g ?dt))
+    (==> ?g + :Frame 1)
+    (arcade-draw)
+    (==> ?s + :SinceShot 1)
+    (when (>= (:SinceShot ?s) (setting Arcade Play :PerceiveEvery))
+      (put ?s :SinceShot 0)
+      (==> ?s + :Beat 1)
+      (arcade-perceive yes))
+    ?g)
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 7  ACTUATION
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-attempt {?attempt}
+    "Perform an ATTEMPT and answer with a RESULT.
+
+     AN ACTION NOT OFFERED IS REFUSED, NOT IGNORED.  Steering a
+     finished game returns Fail with the reason, because a mind told
+     nothing about why its action did nothing cannot learn that the
+     world has a state in which acting is pointless."
+    (var ?act (:Act ?attempt))
+    (if (not (in ?act (arcade-able)))
+        (return (arcade-result ?attempt Fail ($ "not available now: " ?act)))
+     else
+        (try
+          (do
+            (if (= ?act restart)
+                (do (arcade-new-game)
+                    (==> (arcade-session) + :Beat 1)
+                    (tell (arcade-perceiver-url)
+                      ($ (arcade-event (arcade-capture) began)))
+                    (arcade-perceive))
+             or (arcade-turns-p)
+                ;;; TURNS: the act IS the passage of time
+                (do (arcade-steer ?act)
+                    (arcade-advance)
+                    (==> (arcade-session) + :Beat 1)
+                    (arcade-perceive))
+             else
+                ;;; REALTIME: buffer the turn and return.  The world is
+                ;;; already running; the next scheduled percept will
+                ;;; show what the turn did, when the game took it.
+                ;;; `wait` buffers nothing — arcade-steer ignores it —
+                ;;; and returns Done: holding course, recorded as an act.
+                (arcade-steer ?act))
+            (return (arcade-result ?attempt Done "")))
+          learn ?fault
+            (return (arcade-result ?attempt Fail (string ?fault))))))
+
+
+  (function arcade-serve {}
+    "Answer every queued ATTEMPT, in the order it arrived.
+
+     ON THE LOOP'S THREAD, which is the point: an attempt steps and
+     captures, and both touch the window."
+    (var ?s (arcade-session))
+    (var ?queue (:Pending ?s))
+    (put ?s :Pending {})
+    (for ?attempt in ?queue
+      (tell (arcade-perceiver-url) ($ (arcade-attempt ?attempt))))
+    (# ?queue))
+
+
+  (function arcade-result {?attempt literal ?status string ?why}
+    (return
+      [RESULT
+        :Act     (:Act ?attempt)
+        :Status  ?status
+        :Trial   (:Trial ?attempt)
+        :Reason  ?why
+        :Beat    (arcade-beat)
+        :Moment  (moment)
+        :Token   (arcade-token)]))
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 8  STARTUP AND SHUTDOWN
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (function arcade-start {}
+    "Open the window, start a game, register — and run the world until
+     the window closes.
+
+     THE WINDOW IS THE RASTER.  Opened at exactly the raster's size, so
+     what TakeScreenshot captures IS the 1024 x 1024 image, with no
+     resampling between what was drawn and what is perceived.
+
+     THIS IS THE ONE LOOP, AND THE ONE THREAD.  Everything that touches
+     raylib happens here.  It also holds the process open — a psyche
+     whose lifetime depended on a console being requested would stop
+     the moment it was started headless.
+
+     THE GAME'S OWN FRAME RATE PACES IT.  SetTargetFPS makes EndDrawing
+     wait out the rest of each frame, so the loop runs at sixty a
+     second without spinning a core — stepping the world in realtime,
+     redrawing it in turns."
+    (unless (arcade-check-scale) (return refused))
+    (raylib.InitWindow (setting Arcade Raster :Width)
+                       (setting Arcade Raster :Height)
+                       (setting Arcade World :Title))
+    (raylib.SetTargetFPS (setting Pacman Window :Fps))
+    (put (arcade-session) :Run (string (uuid)))
+    (arcade-new-game)
+    (arcade-draw)
+    (arcade-register)
+    (put (arcade-session) :Task (start Arcade))
+    (trace ($ "[Arcade] started, " (setting Arcade Play :Mode) " mode"))
+
+    (forever
+      (var ?s (arcade-session))
+
+      ;;; a TERMINATE, or the window's close button
+      (when (or (= yes (:Closing ?s)) (= yes (raylib.WindowShouldClose)))
+        (break))
+
+      ;;; the first sight of the world, once the grant has arrived
+      (when (= yes (:FirstLook ?s))
+        (put ?s :FirstLook no)
+        (arcade-perceive))
+
+      ;;; whatever the mind has asked for since the last pass
+      (arcade-serve)
+
+      (if (arcade-turns-p)
+          (arcade-draw)          ; turns: redraw, never step
+       else
+          (arcade-tick)))        ; realtime: the world runs regardless
+
+    ;;; cancel takes a TASK, not an agent's name
+    (unless (nil-p (:Task (arcade-session)))
+      (cancel (:Task (arcade-session))))
+    (arcade-close))
+
+
+  (function arcade-close {}
+    (raylib.CloseWindow)
+    (trace "[Arcade] closed")
+    closed)
+
+
+  ;;; ─────────────────────────────────────────────────────────────
+  ;;; § 9  THE AGENT
+  ;;;
+  ;;; A LISTENER, AND NOTHING MORE.  It touches no window: it queues
+  ;;; what the mind sends and the loop in arcade-start acts on it.
+  ;;; ─────────────────────────────────────────────────────────────
+
+  (agent Arcade
+
+    (function {}
+      (when (cancelled-p (self)) (exit yes)))
+
+    (setting Arcade Psyche :Url)
+
+    (function {?sender ?message}
+      (var ?tuple (parse ?message))
+      (var ?s (arcade-session))
+      (case (top ?tuple)
+        of ATTEMPT
+          (put ?s :Pending (append (:Pending ?s) {?tuple}))
+        of PSYCHE
+          (arcade-granted ?tuple)
+        of TERMINATE
+          (put ?s :Closing yes)
+        else
+          (trace ($ "[Arcade] unknown tuple: " (top ?tuple)))))
+
+    (setting Arcade Psyche :Delay)
+    {listening})
+
+
+)
+
+;; ---------------  end of file -----------------
