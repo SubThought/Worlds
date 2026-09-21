@@ -1,0 +1,165 @@
+;;; **********************************************************************************************
+;;;
+;;;   Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;   IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;   ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;   DEALINGS IN THE SOFTWARE.
+;;;
+;;;  **********************************************************************************************
+;;;
+;;; Arcade.daicho — configuration for the Arcade psyche.
+;;;
+;;; Lives in GIL's cfg/, beside the other psyches' daichos, and is
+;;; grokked from 1.0/pacman/ as "../gil/cfg/Arcade.daicho" because the
+;;; Arcade process runs with its home at the pacman folder.
+;;;
+;;; ONE SETTING IT NEEDS LIVES IN pacman.daicho, NOT HERE: [Window
+;;; :Scale].  draw.theory reads it once, at grok, so this file cannot
+;;; override it.  At 1024 pixels the largest scale that fits the board
+;;; is 44 — the psyche checks, refuses anything that would crop, and
+;;; says so when a smaller value wastes the raster.
+;;;
+;;; *************************************************************************************
+
+(settings Arcade {1 0 0}
+  memo "Arcade psyche configuration."
+  path "../gil/cfg/Arcade.daicho"
+
+
+  ;;; ────────────────────────────────────────────────────────────
+  ;;; THE PSYCHE
+  ;;;
+  ;;; :Delay is the listening agent's interval.  The agent only
+  ;;; queues what the mind sends — the world itself runs in the one
+  ;;; loop in arcade-start, paced by the game's frame rate, because
+  ;;; every raylib call has to be on the thread that opened the window.
+  ;;; ────────────────────────────────────────────────────────────
+
+  [Psyche
+    :Url     "tcp://127.0.0.1:4270/arcade"
+    :Delay   \@m1{1}
+  ]
+
+
+  ;;; ────────────────────────────────────────────────────────────
+  ;;; THE MIND — FALLBACKS ONLY
+  ;;;
+  ;;; The PSYCHE grant supplies the real addresses.  These are what
+  ;;; the psyche uses before it is told better, so a world brought up
+  ;;; before the mind is not mute.  The Registrar is the one address it
+  ;;; genuinely needs up front, since that is where it asks.
+  ;;; ────────────────────────────────────────────────────────────
+
+  [Mind
+    :Registrar  "tcp://127.0.0.1:4240/registrar"
+    :Perceiver  "tcp://127.0.0.1:4210/perceiver"
+    :Executor   "tcp://127.0.0.1:4241/executor"
+  ]
+
+
+  ;;; ────────────────────────────────────────────────────────────
+  ;;; THE WORLD
+  ;;;
+  ;;; :Channel is the title, as a literal — the channel a percept
+  ;;; arrives on.  A second Arcade title would be a second channel on
+  ;;; the same psyche, not a second psyche.
+  ;;; ────────────────────────────────────────────────────────────
+
+  [World
+    :Channel  pacman
+    :Title    "GIL plays Pacman"
+  ]
+
+
+  ;;; ────────────────────────────────────────────────────────────
+  ;;; THE RASTER, AND WHERE FRAMES GO
+  ;;;
+  ;;; THE SAME TWO STORES EIDOS USES, in GIL's own tree — reached as
+  ;;; ../gil/ because this process runs with its home at 1.0/pacman/.
+  ;;;
+  ;;; :Hot is the working set every psyche shares.  A frame is
+  ;;;   arcade_percept_<guid>.png there, and its address is
+  ;;;   frame://arcade/<guid>.  The portal resolves addresses against
+  ;;;   this folder, which is why it must be GIL's and not pacman's.
+  ;;;
+  ;;; :Archive is append-only and never collected.  A run that leaves
+  ;;;   no archive leaves no evidence.
+  ;;;
+  ;;; BOTH FOLDERS MUST EXIST.  Premise has no call to make one.
+  ;;;
+  ;;; THERE IS NO :Keep.  Frames are collected on disuse by
+  ;;; consolidation, never by the psyche — an earlier :Keep evicted by
+  ;;; position, which is the ring buffer frames.py rejects: a detector
+  ;;; still holding an address could find a different frame, or none.
+  ;;; ────────────────────────────────────────────────────────────
+
+  [Raster
+    :Width     1024
+    :Height    1024
+    :Hot       "../gil/etc/frames/in/"
+    :Archive   "../gil/etc/archive/arcade/"
+  ]
+
+
+  ;;; ────────────────────────────────────────────────────────────
+  ;;; PLAY
+  ;;;
+  ;;; :Mode realtime | turns — REALTIME IS THE DEFAULT.
+  ;;;
+  ;;;   realtime  the game runs at its own pace whether or not the mind
+  ;;;             acts.  An attempt buffers a turn and returns at once.
+  ;;;             A percept every :PerceiveEvery frames.
+  ;;;
+  ;;;   turns     the world advances only on an attempt, by
+  ;;;             :FramesPerAction frames at a fixed :Dt, then one
+  ;;;             percept.  Deterministic, and the laboratory setting.
+  ;;;
+  ;;; A world that waits measures what the mind understands; a world
+  ;;; that does not also measures whether it can understand in time.
+  ;;; Pacman is the second kind, and the mind meets it as it is unless
+  ;;; told otherwise.
+  ;;;
+  ;;; ── REALTIME ────────────────────────────────────────────────
+  ;;;
+  ;;; :PerceiveEvery 6 at sixty frames a second is ten percepts a
+  ;;; second.  A 1024 x 1024 capture every frame would spend the
+  ;;; machine writing PNGs, and no mind looks that often.  Lower it and
+  ;;; the mind sees more of the motion and the disk fills faster; raise
+  ;;; it and Pacman may pass a junction between two looks.
+  ;;;
+  ;;; dt is the game's own: real frame time, capped at [Game :DtMax]
+  ;;; in pacman.daicho, so a stall is a hiccup rather than a tunnel
+  ;;; through a wall.
+  ;;;
+  ;;; ── TURNS ───────────────────────────────────────────────────
+  ;;;
+  ;;; TWELVE FRAMES AT A SIXTIETH is 0.2 s — one tile at Pacman's five
+  ;;; tiles a second.  Turns are taken at tile centres, so an action
+  ;;; lasting about a tile gives each decision a junction to act at.
+  ;;;
+  ;;; A FIXED :Dt IS WHAT MAKES IT DETERMINISTIC — except while the
+  ;;; ghosts are frightened, since their turns are random.
+  ;;;
+  ;;; ── BOTH ────────────────────────────────────────────────────
+  ;;;
+  ;;; READY! FREEZES THE WORLD FOR TWO SECONDS at the start of every
+  ;;; game.  That is the game's rule and it is left alone; the mind
+  ;;; will learn that the start of a game is unresponsive.
+  ;;; ────────────────────────────────────────────────────────────
+
+  [Play
+    :Mode             realtime    ;;; realtime | turns
+    :PerceiveEvery    6           ;;; realtime: frames between percepts
+    :FramesPerAction  12          ;;; turns: frames each attempt runs
+    :Dt               0.0166667   ;;; turns: the fixed step
+  ]
+
+)
+
+;; ---------------  end of file -----------------

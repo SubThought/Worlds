@@ -1,0 +1,50 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;;  pacman.daicho   --  configuration ledger for the Pacman theory.
+;;;
+;;;  Design after raylib-pacman (b12n-oss) and pacman.clj by Michiel Borkent
+;;;  (MIT License). Original Premise implementation: code, maze layout, and
+;;;  shim written fresh for this port; no source text copied. Binds raylib by
+;;;  Ramon Santamaria (zlib license) at runtime. Pac-Man is a trademark of
+;;;  Bandai Namco; no original assets are used. Credits: doc/pacman-readme.md.
+;;;
+;;; Grokked before anything else loads (Protocol 123), so :Library below
+;;; is available when pkg/raylib/raylib.package resolves its externals.
+;;; Speeds are tiles per second. Timers are seconds.
+
+(settings Pacman {1 0 0}
+  memo "Pacman configuration ledger."
+  path "cfg/pacman.daicho"
+
+  [Window :Title "Premise Pacman"
+          :Scale  30                     ; pixels per tile
+          :Fps    60]
+
+  [Game   :PacSpeed    5.0
+          :GhostSpeed  4.4
+          :FrightSpeed 2.8
+          :ChaseSecs   20.0              ; chase and scatter alternate
+          :ScatterSecs 7.0
+          :FrightSecs  6.0
+          :Lives       3
+          :DtMax       0.05]             ; the clamp: a stall is a hiccup
+
+  [Run    :Deadline  0                   ; 0 = play until the window closes
+          :ShotPath  ""                  ; "" = no capture
+          :ShotFrame 0]
+
+  [Raylib :Library "libraylib.so"]       ; macOS: "libraylib.dylib"
+)                                        ; Windows: "raylib.dll"
