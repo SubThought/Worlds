@@ -1,0 +1,58 @@
+;;; *************************************************************************************
+;;;
+;;;  Copyright(c) 2013-2026 SubThought Corporation. All Rights Reserved.
+;;;
+;;;  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+;;;  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;;;  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+;;;
+;;;  IN NO EVENT SHALL THE AUTHOR(S) OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+;;;  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+;;;  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE, ITS USE, OR OTHER
+;;;  DEALINGS IN THE SOFTWARE.
+;;;
+;;; *************************************************************************************
+;;;
+;;;  pacman.theory   --  entry point: boot order and theory assembly.
+;;;
+;;;  Design after raylib-pacman (b12n-oss) and pacman.clj by Michiel Borkent
+;;;  (MIT License). Original Premise implementation: code, maze layout, and
+;;;  shim written fresh for this port; no source text copied. Binds raylib by
+;;;  Ramon Santamaria (zlib license) at runtime. Pac-Man is a trademark of
+;;;  Bandai Namco; no original assets are used. Credits: doc/pacman-readme.md.
+;;;
+;;; A Premise 3.4 port of the raylib maze-chase game (Clojure original).
+;;; Run from the 1.0/pacman/ folder:
+;;;
+;;;   premise pacman.theory                        ; load, then (Pacman.run)
+;;;   premise --repl no --eval "(Pacman.run 10)" pacman.theory
+;;;
+;;; Boot order per Protocols 122/123: settings are grokked synchronously
+;;; before any library loads, so the raylib library path in the daicho is
+;;; set before the package resolves its external declarations.
+;;;
+;;; ASSUMPTIONS TO SMOKE-TEST FIRST (Phase 0, agreed):
+;;;   1. `float` is accepted as a native :Params type and as a :Returns
+;;;      taxon (needed by GetFrameTime, DrawCircle, rlVertex2f).
+;;;   2. A raylib Color struct passed by value marshals correctly as a
+;;;      packed int32 (four-byte all-integer struct in one register).
+;;;   3. rlColor4ub's unsigned-char parameters marshal as int32.
+;;;   4. 2D array cells read as (get ?grid ?r ?c) and write as
+;;;      (put ?grid {?r ?c} ?value).
+;;; If 1-3 fail, switch to Option B, which ships in pkg/raylib/:
+;;; build RaylibKit.c per its header, point the daicho [Raylib :Library]
+;;; at the built binary, and change the require line below to
+;;; "pkg/raylib/raylib-kit.package". Nothing else changes.
+
+(grok "cfg/pacman.daicho")                          ; settings first
+(require raylib from "pkg/raylib/raylib.package")   ; then the bindings
+
+(theory Pacman
+  (grok "src/axioms/game.theory")     ; the game half -- nothing here draws
+  (grok "src/portal/draw.theory")     ; the drawing half -- nothing here decides
+  (grok "src/portal/main.theory"))    ; loop, input, unattended-run arguments
+
+(tell user ($ "Pacman loaded." \n
+              "(Pacman.run) to play. Arrows or WASD steer, ENTER restarts." \n
+              "(Pacman.run 10) quits after ten seconds of game time." \n
+              "(Pacman.run 3 \"out.png\" 76) also captures frame 76." \n))
